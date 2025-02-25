@@ -32,7 +32,7 @@ class RegisterSet:
   
 class slaveRequest:
 	FRAME_MIN_LENGTH=0x08;
-	FRAME_MAX_LENGTH=0x100;
+	FRAME_MAX_LENGTH=0x102;
 	
 	def __init__(self,data):
 		#logger
@@ -43,11 +43,12 @@ class slaveRequest:
 		self.R_W=False;
 		self.regAddress=0;
 		self.regNb=0;
+		self.byteCount = 0;
 		self.data=dict();
 		
 		#check rough length
 		if ((len(data) > self.FRAME_MAX_LENGTH) or (len(data) < self.FRAME_MIN_LENGTH )):
-			self.logger.warning('Received Frame Length Error');
+			self.logger.warning('Received Frame Length Error: '+ str(len(data)) + 'max is: ' + str(self.FRAME_MAX_LENGTH));
 			return;
 		#get modbus function code
 		self.modbusFunctionCode=data[1];
@@ -74,7 +75,8 @@ class slaveRequest:
 			regNumber=data[4]*0x100 + data[5];
 
 			#check that byte nb is twice register number
-			if (2*regNumber != data[6]):
+			self.byteCount = data[6];
+			if (2*regNumber != self.byteCount):
 				self.logger.warning('WRITE_MULTIPLE_REGISTERS reg nb inconsistency');
 				return;
 				
@@ -97,7 +99,7 @@ class slaveRequest:
 			self.modbusAddress=data[0];
 			self.R_W=False;
 			self.regAddress=0x100*data[2]+data[3];
-			self.regNb=0x100*data[4]+data[5];
+			self.regNb=0x100*data[4]+data[5]; 
 			for i in range(0,self.regNb):
 				self.data[self.regAddress+i]=0x100*data[7+2*i]+data[8+2*i];
 			
@@ -112,7 +114,10 @@ class DDModbus:
 	WRITE_MULTIPLE_REGISTERS=0x10;
 	
 	ANSWER_FRAME_MIN_LENGTH=0x07;
-	ANSWER_FRAME_MAX_LENGTH=0x100;
+	ANSWER_FRAME_MAX_LENGTH=0x200;
+
+	lastValidSlaveFrameReceived = None; # used to store last frame of data received as slave following a WRITE message
+	RESPOND_TO_READ_REQUESTS = True; # set to false for debug mode (no risk to send wrong values to the boiler)
 
 	def __init__(self,ip,port):
 		#logger
@@ -129,7 +134,7 @@ class DDModbus:
 		while run:
 			try:
 				self.socket.settimeout(DDModbus.CLEANING_TIMEOUT);
-				data=self.socket.recv(1024);
+				data=self.socket.recv(2048);
 				self.logger.debug('Cleaning of: '+str(len(data))+' bytes(s)');
 			except socket.error as exc:
 				run=False;
@@ -137,16 +142,19 @@ class DDModbus:
 	def slaveRx(self,modbusSlaveAddress):
 			try:
 				self.socket.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
-				data=self.socket.recv(1024);
+				data=self.socket.recv(2048);
 				self.logger.debug('Frame received: '+data.hex());
 				
 				#frame consistency check
 				frame=slaveRequest(data);
 				
-				#if slave address is correct
+				#if slave address is the expected one
 				if ((modbusSlaveAddress!=0) and (frame.modbusAddress==modbusSlaveAddress)):
 					#ack for WRITE_MULTIPLE_REGISTERS request
 					if (frame.modbusFunctionCode==DDModbus.WRITE_MULTIPLE_REGISTERS):
+						#record this frame to use it later when the boiler requests data
+						self.lastValidSlaveFrameReceived = data[:];
+						#send ACK
 						self.logger.debug('Ack WRITE_MULTIPLE_REGISTERS frame');
 						tx=bytearray();
 						tx.extend(data[0:6]);
@@ -155,10 +163,39 @@ class DDModbus:
 						tx.append((crc >> 8) & 0xFF);
 						tx.append(0);
 						self.socket.send(tx);
+						self.logger.debug('Response sent:' + tx.hex());
 					#ack for READ_ANALOG_HOLDING_REGISTERS
 					elif (frame.modbusFunctionCode==DDModbus.READ_ANALOG_HOLDING_REGISTERS):
-						#it is not possible to ack the request as there is not content to provide
-						self.logger.debug('No Ack for READ_ANALOG_HOLDING_REGISTERS frame');
+						# let's build a response - using the last received slave frame (without changing any value)
+						self.logger.debug('We have this frame in memory to use as source for the data requested:' + self.lastValidSlaveFrameReceived.hex());
+						origframe=slaveRequest(self.lastValidSlaveFrameReceived);
+						# verify the frame we have in memory is containing what the request wants
+						verif_modbus_address = (frame.modbusAddress == origframe.modbusAddress);
+						verif_reg_address = (frame.regAddress == origframe.regAddress);
+						verif_nbreg = (frame.regNb == origframe.regNb);
+						self.logger.debug('prev frame address' + hex(origframe.modbusAddress) + ' matching? '+ str(verif_modbus_address));
+						self.logger.debug('prev frame start address ' + hex(origframe.regAddress) + ' matching? '+ str(verif_reg_address));
+						self.logger.debug('prev frame regnb ' + str(origframe.regNb) + ' matching? '+ str(verif_nbreg));
+						if (verif_modbus_address and verif_nbreg and verif_reg_address):
+							# build the message to send
+							tx=bytearray();
+							tx.extend(data[0:2]); #address + function
+							tx.append(origframe.byteCount); #byte count
+							tx.extend(self.lastValidSlaveFrameReceived[7:7+origframe.byteCount]); # data registers payload
+							crc=calc_crc(tx);
+							tx.append(crc & 0xFF);
+							tx.append((crc >> 8) & 0xFF);
+							tx.append(0);
+							self.logger.debug('we need to send: ' + tx.hex());
+							if self.RESPOND_TO_READ_REQUESTS:
+								self.logger.debug('sending');
+								self.socket.send(tx);
+							else:
+								self.logger.debug('not sending to boiler (virtual mode for debug)');
+						else:
+							self.logger.debug('not sending anything as frame in memory is not matching the request received')
+				else:
+					self.logger.debug('slave address is not matching expected list');
 
 				return frame;
 			except socket.error as exc:
@@ -186,7 +223,7 @@ class DDModbus:
 		#wait for answer
 		try:
 			self.socket.settimeout(DDModbus.MASTER_RX_TIMEOUT);
-			answer=self.socket.recv(1024);
+			answer=self.socket.recv(2048);
 			self.logger.debug('Answer received: '+answer.hex());
 			
 			#check answer
@@ -266,7 +303,7 @@ class DDModbus:
 		#wait for ack
 		try:
 			self.socket.settimeout(DDModbus.MASTER_RX_TIMEOUT);
-			answer=self.socket.recv(1024);
+			answer=self.socket.recv(2048);
 			self.logger.debug('Ack received: '+answer.hex());
 			#check ack
 			waited_ack=request[0:6];
