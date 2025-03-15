@@ -8,14 +8,13 @@ import time,datetime,pytz
 from enum import IntEnum
 from Diematic import Diematic,DDREGISTER
 
-#This class allow to read/write parameters to Diematic3 regulator with the helo of a RS485/TCPIP converter
-#refresh of attributes From regulator is done roughly every minute
-#update request to the regulator are done within 10 s and trigger a whole read refresh
+#This class allows to read data from Diematic Delta regulator with the help of a RS485/TCPIP converter
+#This is a read only version (no support to update boiler settings)
 class DiematicDeltaPanel(Diematic):
 	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False):
 		
 		super().__init__(ip,port,0,interfaceAddress,boilerTimezone,syncTime)
-        
+  
 
 
 #modbus loop, shall run in a specific thread. Allow to exchange register values with the Dielatic regulator
@@ -27,61 +26,28 @@ class DiematicDeltaPanel(Diematic):
 			self.run=True;
 			#reset timeout
 			self.lastSynchroTimestamp=time.time();
+			#initialize the register table with -1 - avoid crashes if registers are expected by the Diematic class but not supported dy the Delta Panel implementation
+			indexes = list(range(1,737));
+			self.registers = dict.fromkeys(indexes, -1);
 			while self.run:
-				#wait for a frame received
+				#wait for a frame to be received
 				frame=self.modBusInterface.slaveRx(self.interfaceAddress);
 				
 				#if a frame has been received
 				if (frame):
 					if ((frame.valid) and (frame.modbusAddress==self.interfaceAddress) and (frame.modbusFunctionCode==DDModbus.WRITE_MULTIPLE_REGISTERS)):
-						self.logger.debug('A valid frame has been received');
+						self.logger.debug('A Diematic Delta valid frame has been received');
 						self.logger.debug('Register data :'+ str(frame.data))
 
-					#reset timeout
-					self.lastSynchroTimestamp=time.time();
+						#reset timeout
+						self.lastSynchroTimestamp=time.time();
 
-					#todo reflesh below function specific to Diematic3 to get registers content
-					#self.refreshRegisters()
+						#update the register table with the values just received
+						self.registers.update(frame.data)
+						
+						#refresh regulator attribute
+						self.refreshAttributes();
 					
-					#refresh regulator attribute
-					#self.refreshAttributes();
-
-					#check time drift
-					# check self.datetime exist before running these lines
-					#now = datetime.datetime.now().astimezone();
-					#self.logger.debug('Now :' + str(now));
-					#self.logger.debug('Boiler :' + str(self.datetime));
-					#drift = (now - self.datetime).total_seconds();
-					drift=0;
-					self.logger.debug('Drift :' + str(drift));
-					
-					#if drift is more than 60 s
-					if (self.syncTime and abs(drift) >=60):
-						self.overDriftCounter+=1;
-						self.logger.debug('Drift Counter:' + str(self.overDriftCounter));
-						# more than 6 successive times
-						if (self.overDriftCounter >=6):
-							#boiler time is set
-							self.overDriftCounter=0;
-							self.logger.critical('Sync Time: Set boiler time to :' + str(now));
-							self.datetime=now;
-					else:
-						self.overDriftCounter=0;
-									
-								
-				if ((time.time()-self.lastSynchroTimestamp) > VALIDITY_TIME):
-					#log
-					self.logger.warning('Synchro timeout');
-					#init regulator register
-					self.initAttributes();
-					#publish values
-					self.updateCallback();
-					#reinit connection
-					self.initConnection();
-					#reset timeout
-					self.lastSynchroTimestamp=time.time();
-					
-
 			self.logger.critical('Modbus Thread stopped');
 		except BaseException as exc:		
 			self.logger.exception(exc)

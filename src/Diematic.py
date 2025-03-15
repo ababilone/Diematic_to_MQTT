@@ -54,6 +54,10 @@ class DDREGISTER(IntEnum):
 	BOILER_TYPE=457;
 	PUMP_POWER=463;
 	ALARME=465;
+	NB_IMPULS_DIX=77;
+	NB_IMPULS_UNIT=251;
+	FCT_BRUL_DIX=78;
+	FCT_BRUL_UNIT=252;
 	
 #This class allow to read/write parameters to Diematic regulator with the helo of a RS485/TCPIP converter
 #refresh of attributes From regulator is done roughly every minute
@@ -155,6 +159,8 @@ class Diematic:
 		self._zoneBDayTargetTemp=None;
 		self._zoneBNightTargetTemp=None;
 		self._zoneBAntiiceTargetTemp=None;
+		self._nbImpuls=None;
+		self._fctBrul=None;
 		
 	def initRegulator(self):
 		#RS485 converter connexion init
@@ -166,6 +172,7 @@ class Diematic:
 
 
 #this setter/getter are used to read or change values of the regulator
+
 	@property
 	def hotWaterNightTargetTemp(self):
 			return self._hotWaterNightTargetTemp;
@@ -323,6 +330,14 @@ class Diematic:
 		reg=DDModbus.RegisterSet(DDREGISTER.JOUR.value,[x.day,x.month,(x.year % 100)]);
 		self.regUpdateRequest.put(reg);
 
+	@property
+	def nbImpuls(self):
+			return self._nbImpuls;
+
+	@property
+	def fctBrul(self):
+			return self._fctBrul;
+
 #decoding property to decode Modbus encoded float values	
 	def float10(self,reg):
 		if (reg==0xFFFF):
@@ -330,6 +345,20 @@ class Diematic:
 		if (reg >= 0x8000):
 			reg=-(reg & 0x7FFF)
 		return(reg*0.1);
+
+#decoding values stored in hex on 2 registers
+	def hex2reg(self, regDix, regUnit):
+		retValue = None;
+		try:
+			# if registers have not been initialized at least once, do not calculate (avoid jumps of valueat startup)
+			if self.registers[regDix] == -1 or self.registers[regUnit] == -1:
+				retValue = None;
+			else:
+				retValue=int(hex(self.registers[regDix])[2:]) * 10;
+				retValue+=self.registers[regUnit];
+		except ValueError:
+			retValue=None;
+		return(retValue);
 
 #this property is used to refresh class functionnal attributes with data extracted from the regulator	
 	def refreshAttributes(self):
@@ -451,6 +480,12 @@ class Diematic:
 			self._zoneBDayTargetTemp=None;
 			self._zoneBNightTargetTemp=None;
 			self._zoneBAntiiceTargetTemp=None;
+
+		# nbImpuls coded in hex on 2 registers
+		self._nbImpuls = self.hex2reg(DDREGISTER.NB_IMPULS_DIX, DDREGISTER.NB_IMPULS_UNIT);
+		
+		# fctBrul coded in hex on 2 registers
+		self._fctBrul = self.hex2reg(DDREGISTER.FCT_BRUL_DIX, DDREGISTER.FCT_BRUL_UNIT);
 
 		self.updateCallback();
 

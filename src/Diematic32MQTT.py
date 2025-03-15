@@ -76,7 +76,9 @@ def diematicPublish(self):
 	buffer.update('burnerStatus',intValue(self.burnerStatus));
 	buffer.update('pumpPower',intValue(self.pumpPower));
 	buffer.update('alarm',json.dumps(self.alarm) if self.alarm is not None else '');
-	
+	buffer.update('nbImpuls',intValue(self.nbImpuls));
+	buffer.update('fctBrul',intValue(self.fctBrul));
+
 	#hotwater
 	buffer.update('hotWater/pump',intValue(self.hotWaterPump));
 	buffer.update('hotWater/temp',floatValue(self.hotWaterTemp));
@@ -125,6 +127,8 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addSensor('pump_power',"Puissance Pompe",'power_factor','pumpPower',None,"%");
 		hassio.addSensor('alarm',"Etat",None,'alarm',"{{ value_json.txt}}",None);
 		hassio.addSensor('alarm_id',"N° Erreur",None,'alarm',"{{ value_json.id}}",None);
+		hassio.addSensor('nb_impuls',"Impulsions Bruleur",None,'nbImpuls',None,None);	
+		hassio.addSensor('fct_brul',"Fonctionnement Bruleur",None,'fctBrul',None,"hours");
 		
 		#hot water
 		hassio.addBinarySensor('hot_water_pump',"Pompe ECS",None,'hotWater/pump',"1","0");	
