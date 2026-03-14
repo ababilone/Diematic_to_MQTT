@@ -17,6 +17,10 @@ The Diematic 3 regulator exposes a **Modbus RTU RS485** port (Mini-DIN 4).
 | USB RS485 dongle (CH340, FTDI, …) | `connectionType: serial` |
 | RS485-to-Ethernet/Wi-Fi (USR-TCP232-306, …) | `connectionType: tcp` |
 
+**USB RS485 dongle example:**
+
+![USB RS485 Adapter](ReadMeImages/UsbRS485Adapter.jpg)
+
 ### Wiring (Mini-DIN 4)
 
 ![ModBus wiring](ReadMeImages/ModBusMiniDinConnection.png)
