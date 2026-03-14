@@ -268,12 +268,23 @@ if __name__ == '__main__':
 		config.read('./conf/Diematic32MQTT.conf')
 
 		#Modbus settings
-		modbusAddress=config.get('Modbus','ip');
-		modbusPort=config.get('Modbus','port');
 		modbusRegulatorAddress=int(config.get('Modbus','regulatorAddress'),0);
 		modbusInterfaceAddress=int(config.get('Modbus','interfaceAddress',fallback='0'),0);
-		logger.critical('Modbus interface address: '+modbusAddress+' : '+modbusPort);
 		logger.critical('Modbus regulator address: '+ hex(modbusRegulatorAddress));
+
+		connectionType=config.get('Modbus','connectionType',fallback='tcp').strip().lower();
+		if connectionType == 'serial':
+			modbusSerialPort=config.get('Modbus','serialPort');
+			modbusBaudrate=int(config.get('Modbus','baudrate',fallback='9600'));
+			modbusAddress=None;
+			modbusPort=0;
+			logger.critical('Modbus serial port: '+modbusSerialPort+' @ '+str(modbusBaudrate)+' baud');
+		else:
+			modbusSerialPort=None;
+			modbusBaudrate=9600;
+			modbusAddress=config.get('Modbus','ip');
+			modbusPort=config.get('Modbus','port');
+			logger.critical('Modbus TCP address: '+modbusAddress+' : '+modbusPort);
 		
 		#regulator type
 		regulatorType=config.get('Boiler','regulatorType',fallback='Diematic3');
@@ -309,15 +320,15 @@ if __name__ == '__main__':
 		if (regulatorType=='DiematicDelta'):
 			logger.critical('Regulator type is Diematic Delta');
 			DiematicDeltaPanel.DiematicDeltaPanel.updateCallback=diematicPublish;
-			panel=DiematicDeltaPanel.DiematicDeltaPanel(modbusAddress,int(modbusPort),modbusRegulatorAddress,modbusInterfaceAddress,boilerTimezone,boilerTimeSync);
+			panel=DiematicDeltaPanel.DiematicDeltaPanel(modbusAddress,int(modbusPort),modbusRegulatorAddress,modbusInterfaceAddress,boilerTimezone,boilerTimeSync,serial_port=modbusSerialPort,baudrate=modbusBaudrate);
 		elif (regulatorType=='Diematic4'):
 			logger.critical('Regulator type is Diematic4');
 			Diematic4Panel.Diematic4Panel.updateCallback=diematicPublish;
-			panel=Diematic4Panel.Diematic4Panel(modbusAddress,int(modbusPort),modbusRegulatorAddress,modbusInterfaceAddress,boilerTimezone,boilerTimeSync);
+			panel=Diematic4Panel.Diematic4Panel(modbusAddress,int(modbusPort),modbusRegulatorAddress,modbusInterfaceAddress,boilerTimezone,boilerTimeSync,serial_port=modbusSerialPort,baudrate=modbusBaudrate);
 		else:
 			logger.critical('Regulator type is Diematic3');
 			Diematic3Panel.Diematic3Panel.updateCallback=diematicPublish;
-			panel=Diematic3Panel.Diematic3Panel(modbusAddress,int(modbusPort),modbusRegulatorAddress,modbusInterfaceAddress,boilerTimezone,boilerTimeSync);
+			panel=Diematic3Panel.Diematic3Panel(modbusAddress,int(modbusPort),modbusRegulatorAddress,modbusInterfaceAddress,boilerTimezone,boilerTimeSync,serial_port=modbusSerialPort,baudrate=modbusBaudrate);
 		
 		#set refresh period, with a minimum of 10s
 		panel.refreshPeriod=max(period,10);

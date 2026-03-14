@@ -11,9 +11,9 @@ from Diematic import Diematic,DDREGISTER
 #This class allows to read data from Diematic Delta regulator with the help of a RS485/TCPIP converter
 #This is a read only version (no support to update boiler settings)
 class DiematicDeltaPanel(Diematic):
-	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False):
-		
-		super().__init__(ip,port,0,interfaceAddress,boilerTimezone,syncTime)
+	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False,serial_port=None,baudrate=9600):
+
+		super().__init__(ip,port,0,interfaceAddress,boilerTimezone,syncTime,serial_port=serial_port,baudrate=baudrate)
   
 
 

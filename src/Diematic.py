@@ -65,16 +65,18 @@ class DDREGISTER(IntEnum):
 class Diematic:
 	updateCallback=None;
 
-	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False):
+	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False,serial_port=None,baudrate=9600):
 		#default refresh period
 		REFRESH_PERIOD=60
-		
+
 		#logger
 		self.logger = logging.getLogger(__name__);
-		
+
 		#RS485 converter connexion parameter saving
 		self.ip=ip;
 		self.port=port;
+		self.serial_port=serial_port;
+		self.baudrate=baudrate;
 		
 		#regulator modbus address
 		self.regulatorAddress=regulatorAddress;
@@ -119,7 +121,10 @@ class Diematic:
 	
 	def initConnection(self):
 		#RS485 converter connexion init
-		self.modBusInterface=DDModbus.DDModbus(self.ip,self.port);
+		if self.serial_port is not None:
+			self.modBusInterface=DDModbus.DDModbus(serial_port=self.serial_port,baudrate=self.baudrate);
+		else:
+			self.modBusInterface=DDModbus.DDModbus(ip=self.ip,port=self.port);
 		self.logger.warning('Init Link with Regulator');
 		self.modBusInterface.clean();
 	

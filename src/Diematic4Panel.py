@@ -18,12 +18,12 @@ from Diematic import Diematic,DDREGISTER
 #refresh of attributes From regulator is done roughly every minute
 #update request to the regulator are done within 10 s and trigger a whole read refresh
 class Diematic4Panel(Diematic):
-	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False):
-		
+	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False,serial_port=None,baudrate=9600):
+
 		#state machine initialisation
 		#TOREMOVE self.busStatus=DDModBusStatus.INIT;
-		
-		super().__init__(ip,port,regulatorAddress,0,boilerTimezone,syncTime)
+
+		super().__init__(ip,port,regulatorAddress,0,boilerTimezone,syncTime,serial_port=serial_port,baudrate=baudrate)
 
 #this property is used to get register values from the regulator Diematic4
 	def refreshRegisters(self):

@@ -8,7 +8,7 @@ import traceback
 def calc_crc(data):
     crc = 0xFFFF
     for pos in data:
-        crc ^= pos 
+        crc ^= pos
         for i in range(8):
             if ((crc & 1) != 0):
                 crc >>= 1
@@ -21,19 +21,75 @@ def calc_crc(data):
 class RegisterSet:
 	address=0;
 	data=list();
-	
+
 	def __init__(self,address,data):
 		self.address=address;
 		self.data=data;
-		
+
 	def __str__(self):
 		return('Reg:'+str(self.address)+' data: '+str(self.data));
-		
-  
+
+
+class _TcpTransport:
+	"""Transport layer using a TCP socket (for RS485-to-Ethernet/Wi-Fi adapters)."""
+
+	def __init__(self, ip, port):
+		self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		self._socket.connect((ip, port))
+
+	def settimeout(self, timeout):
+		self._socket.settimeout(timeout)
+
+	def recv(self, size):
+		return self._socket.recv(size)
+
+	def send(self, data):
+		self._socket.send(data)
+
+	def close(self):
+		self._socket.close()
+
+
+class _SerialTransport:
+	"""Transport layer using a local serial port (for USB RS485 adapters).
+
+	Raises OSError (same base class as socket.error) on read timeout so that
+	the rest of the DDModbus code does not need to change its exception handling.
+	"""
+
+	def __init__(self, port, baudrate=9600):
+		import serial
+		self._serial = serial.Serial(
+			port=port,
+			baudrate=baudrate,
+			bytesize=8,
+			parity='N',
+			stopbits=1,
+			timeout=0.5,
+		)
+
+	def settimeout(self, timeout):
+		self._serial.timeout = timeout
+
+	def recv(self, size):
+		data = self._serial.read(size)
+		if not data:
+			# Mimic socket timeout behaviour so callers keep working unchanged
+			raise OSError('Serial read timeout')
+		return data
+
+	def send(self, data):
+		self._serial.write(data)
+		self._serial.flush()
+
+	def close(self):
+		self._serial.close()
+
+
 class slaveRequest:
 	FRAME_MIN_LENGTH=0x08;
 	FRAME_MAX_LENGTH=0x102;
-	
+
 	def __init__(self,data):
 		#logger
 		self.logger = logging.getLogger(__name__)
@@ -45,7 +101,7 @@ class slaveRequest:
 		self.regNb=0;
 		self.byteCount = 0;
 		self.data=dict();
-		
+
 		#check rough length
 		if ((len(data) > self.FRAME_MAX_LENGTH) or (len(data) < self.FRAME_MIN_LENGTH )):
 			self.logger.warning('Received Frame Length Error: '+ str(len(data)) + 'max is: ' + str(self.FRAME_MAX_LENGTH));
@@ -60,7 +116,7 @@ class slaveRequest:
 			if (crc!=0x100*data[7]+data[6]):
 				self.logger.warning('READ_ANALOG_HOLDING_REGISTERS frame CRC error ');
 				return;
-			
+
 			#save request informations
 			self.valid=True;
 			self.modbusAddress=data[0];
@@ -68,7 +124,7 @@ class slaveRequest:
 			self.regAddress=0x100*data[2]+data[3];
 			self.regNb=0x100*data[4]+data[5];
 
-			
+
 		#if modBus feature is WRITE_MULTIPLE_REGISTERS
 		if (self.modbusFunctionCode == DDModbus.WRITE_MULTIPLE_REGISTERS):
 			#get register number
@@ -79,7 +135,7 @@ class slaveRequest:
 			if (2*regNumber != self.byteCount):
 				self.logger.warning('WRITE_MULTIPLE_REGISTERS reg nb inconsistency');
 				return;
-				
+
 			#calculate waited frame length
 			frameLength=2*regNumber+9;
 
@@ -87,67 +143,72 @@ class slaveRequest:
 			if (frameLength > len(data)):
 				self.logger.warning('WRITE_MULTIPLE_REGISTERS frame too short');
 				return;
-			
+
 			#check CRC
 			crc=calc_crc(data[0:frameLength-2]);
 			if (crc!=0x100*data[frameLength-1]+data[frameLength-2]):
 				self.logger.warning('WRITE_MULTIPLE_REGISTERS frame CRC error '+hex(crc));
 				return;
-				
+
 			#save request informations
 			self.valid=True;
 			self.modbusAddress=data[0];
 			self.R_W=False;
 			self.regAddress=0x100*data[2]+data[3];
-			self.regNb=0x100*data[4]+data[5]; 
+			self.regNb=0x100*data[4]+data[5];
 			for i in range(0,self.regNb):
 				self.data[self.regAddress+i]=0x100*data[7+2*i]+data[8+2*i];
-			
-	
+
+
 class DDModbus:
-	ip=None; #serial port id
-	port=None;
 	CLEANING_TIMEOUT=0.1;
 	SLAVE_RX_TIMEOUT=0.5;
 	MASTER_RX_TIMEOUT=2.5;
 	READ_ANALOG_HOLDING_REGISTERS=0x03;
 	WRITE_MULTIPLE_REGISTERS=0x10;
-	
+
 	ANSWER_FRAME_MIN_LENGTH=0x07;
 	ANSWER_FRAME_MAX_LENGTH=0x200;
 
 	lastValidSlaveFrameReceived = None; # used to store last frame of data received as slave following a WRITE message
 	RESPOND_TO_READ_REQUESTS = True; # set to false for debug mode (no risk to send wrong values to the boiler)
 
-	def __init__(self,ip,port):
+	def __init__(self, ip=None, port=None, serial_port=None, baudrate=9600):
+		"""Create a DDModbus instance.
+
+		Pass *either* ``serial_port`` (and optionally ``baudrate``) to use a
+		local USB/serial RS485 adapter, *or* ``ip`` + ``port`` to use an
+		RS485-to-Ethernet/Wi-Fi adapter (original behaviour).
+		"""
 		#logger
 		self.logger = logging.getLogger(__name__)
-		
-		#socket definition and connection
-		self.ip=ip;
-		self.port=port;
-		self.socket=socket.socket(socket.AF_INET, socket.SOCK_STREAM);
-		self.socket.connect((self.ip,self.port));
-		
+
+		if serial_port is not None:
+			self._transport = _SerialTransport(serial_port, baudrate)
+			self.logger.warning('Serial transport initialised on ' + serial_port + ' @ ' + str(baudrate) + ' baud')
+		else:
+			self._transport = _TcpTransport(ip, port)
+			self.logger.warning('TCP transport initialised on ' + str(ip) + ':' + str(port))
+
 	def clean(self):
 		run= True;
 		while run:
 			try:
-				self.socket.settimeout(DDModbus.CLEANING_TIMEOUT);
-				data=self.socket.recv(2048);
+				self._transport.settimeout(DDModbus.CLEANING_TIMEOUT);
+				data=self._transport.recv(2048);
 				self.logger.debug('Cleaning of: '+str(len(data))+' bytes(s)');
-			except socket.error as exc:
+			except OSError:
 				run=False;
 
 	def slaveRx(self,modbusSlaveAddress):
 			try:
-				self.socket.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
-				data=self.socket.recv(2048);
+				self._transport.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
+				data=self._transport.recv(2048);
 				self.logger.debug('Frame received: '+data.hex());
-				
+
 				#frame consistency check
 				frame=slaveRequest(data);
-				
+
 				#if slave address is the expected one
 				if ((modbusSlaveAddress!=0) and (frame.modbusAddress==modbusSlaveAddress)):
 					#ack for WRITE_MULTIPLE_REGISTERS request
@@ -162,7 +223,7 @@ class DDModbus:
 						tx.append(crc & 0xFF);
 						tx.append((crc >> 8) & 0xFF);
 						tx.append(0);
-						self.socket.send(tx);
+						self._transport.send(tx);
 						self.logger.debug('Response sent:' + tx.hex());
 					#ack for READ_ANALOG_HOLDING_REGISTERS
 					elif (frame.modbusFunctionCode==DDModbus.READ_ANALOG_HOLDING_REGISTERS):
@@ -189,7 +250,7 @@ class DDModbus:
 							self.logger.debug('we need to send: ' + tx.hex());
 							if self.RESPOND_TO_READ_REQUESTS:
 								self.logger.debug('sending');
-								self.socket.send(tx);
+								self._transport.send(tx);
 							else:
 								self.logger.debug('not sending to boiler (virtual mode for debug)');
 						else:
@@ -198,11 +259,11 @@ class DDModbus:
 					self.logger.debug('slave address is not matching expected list');
 
 				return frame;
-			except socket.error as exc:
+			except OSError:
 				return False;
-				
+
 	def masterReadAnalog(self,modbusAddress,regAddress,regNb):
-		
+
 		#build request
 		request=bytearray();
 		request.append(modbusAddress);
@@ -215,62 +276,62 @@ class DDModbus:
 		request.append(crc & 0xFF);
 		request.append((crc>>8)& 0xFF);
 		request.append(0);
-		
+
 		#send it
 		self.logger.debug('Send read request: '+request.hex());
-		self.socket.send(request);
-		
+		self._transport.send(request);
+
 		#wait for answer
 		try:
-			self.socket.settimeout(DDModbus.MASTER_RX_TIMEOUT);
-			answer=self.socket.recv(2048);
+			self._transport.settimeout(DDModbus.MASTER_RX_TIMEOUT);
+			answer=self._transport.recv(2048);
 			self.logger.debug('Answer received: '+answer.hex());
-			
+
 			#check answer
-			
+
 			#check rough length
 			if ((len(answer) > self.ANSWER_FRAME_MAX_LENGTH) or (len(answer) < self.ANSWER_FRAME_MIN_LENGTH )):
 				self.logger.warning('Rough Answer Length Error');
 				return;
-		
+
 			#check  modBus address
 			if (answer[0] != modbusAddress):
 				self.logger.warning('Answer modbus address Error');
 				return;
-			
+
 			#check  modBus feature
 			if (answer[1] != DDModbus.READ_ANALOG_HOLDING_REGISTERS):
 				self.logger.warning('Answer modbus feature Error');
 				return;
-				
+
 			#check byte nb
 			if (answer[2] != 2*regNb):
 				self.logger.warning('Answer byte number Error');
 				return;
-				
+
 			#check length
 			answerLength=5+answer[2];
 			if ((len(answer) < answerLength )):
 				self.logger.warning('Answer Length Error');
 				return;
-				
+
 			#check CRC
 			crc=calc_crc(answer[0:answerLength-2]);
 			if (crc!=0x100*answer[answerLength-1]+answer[answerLength-2]):
 				self.logger.warning('Answer CRC error ');
 				return;
 			self.logger.debug('Answer valid ');
-			
+
 			#return answer as dict
 			data=dict();
 			for i in range(0,regNb):
 				data[regAddress+i]=0x100*answer[3+2*i]+answer[4+2*i];
 			return(data);
-			
-		except socket.error as exc:
+
+		except OSError:
 			self.logger.warning('No answer to masterReadAnalog');
 			return;
-			
+
 	def masterWriteAnalog(self,modbusAddress,regAddress,data):
 		#build request
 		request=bytearray();
@@ -290,20 +351,20 @@ class DDModbus:
 		for reg in data:
 			request.append((reg>>8)& 0xFF);
 			request.append(reg & 0xFF);
-			
+
 		crc=calc_crc(request);
 		request.append(crc & 0xFF);
 		request.append((crc>>8)& 0xFF);
 		request.append(0);
-		
+
 		#send it
 		self.logger.info('Send write request: '+request.hex());
-		self.socket.send(request);
-		
+		self._transport.send(request);
+
 		#wait for ack
 		try:
-			self.socket.settimeout(DDModbus.MASTER_RX_TIMEOUT);
-			answer=self.socket.recv(2048);
+			self._transport.settimeout(DDModbus.MASTER_RX_TIMEOUT);
+			answer=self._transport.recv(2048);
 			self.logger.debug('Ack received: '+answer.hex());
 			#check ack
 			waited_ack=request[0:6];
@@ -316,9 +377,7 @@ class DDModbus:
 			else:
 				self.logger.warning('Ack KO. Waited Ack was : '+waited_ack.hex());
 				return(False);
-			
-			
-		except socket.error as exc:
+
+		except OSError:
 			self.logger.warning('No ack  to master write request');
 			return(False);
-
