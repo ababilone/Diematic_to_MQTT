@@ -50,40 +50,44 @@ class _TcpTransport:
 		self._socket.close()
 
 
-class _SerialTransport:
-	"""Transport layer using a local serial port (for USB RS485 adapters).
+class _MinimalModbusInstrument:
+	"""Wraps minimalmodbus.Instrument for direct RTU reads/writes over USB serial.
 
-	Raises OSError (same base class as socket.error) on read timeout so that
-	the rest of the DDModbus code does not need to change its exception handling.
+	Creates one Instrument per slave address (cached) with
+	CLOSE_PORT_AFTER_EACH_CALL=True so the port is released between
+	transactions and the boiler can use the bus freely.
 	"""
 
 	def __init__(self, port, baudrate=9600):
-		import serial
-		self._serial = serial.Serial(
-			port=port,
-			baudrate=baudrate,
-			bytesize=8,
-			parity='N',
-			stopbits=1,
-			timeout=0.5,
-		)
+		import minimalmodbus
+		minimalmodbus.CLOSE_PORT_AFTER_EACH_CALL = True
+		self._mm = minimalmodbus
+		self._port = port
+		self._baudrate = baudrate
+		self._cache = {}  # Instrument objects keyed by slave address
 
-	def settimeout(self, timeout):
-		self._serial.timeout = timeout
+	def _inst(self, slave_addr):
+		if slave_addr not in self._cache:
+			inst = self._mm.Instrument(self._port, slave_addr)
+			inst.serial.baudrate = self._baudrate
+			inst.serial.bytesize = 8
+			inst.serial.parity = self._mm.serial.PARITY_NONE
+			inst.serial.stopbits = 1
+			inst.serial.timeout = 1
+			inst.mode = self._mm.MODE_RTU
+			inst.debug = False
+			self._cache[slave_addr] = inst
+		return self._cache[slave_addr]
 
-	def recv(self, size):
-		data = self._serial.read(size)
-		if not data:
-			# Mimic socket timeout behaviour so callers keep working unchanged
-			raise OSError('Serial read timeout')
-		return data
+	def read_registers(self, slave_addr, reg_address, reg_count):
+		"""Returns dict mapping register address → int value."""
+		values = self._inst(slave_addr).read_registers(reg_address, reg_count)
+		return {reg_address + i: values[i] for i in range(reg_count)}
 
-	def send(self, data):
-		self._serial.write(data)
-		self._serial.flush()
-
-	def close(self):
-		self._serial.close()
+	def write_registers(self, slave_addr, reg_address, data):
+		"""Writes a list of int values; returns True on success."""
+		self._inst(slave_addr).write_registers(reg_address, data)
+		return True
 
 
 class slaveRequest:
@@ -177,20 +181,23 @@ class DDModbus:
 		"""Create a DDModbus instance.
 
 		Pass *either* ``serial_port`` (and optionally ``baudrate``) to use a
-		local USB/serial RS485 adapter, *or* ``ip`` + ``port`` to use an
-		RS485-to-Ethernet/Wi-Fi adapter (original behaviour).
+		local USB/serial RS485 adapter via minimalmodbus, *or* ``ip`` + ``port``
+		to use an RS485-to-Ethernet/Wi-Fi adapter (original behaviour).
 		"""
 		#logger
 		self.logger = logging.getLogger(__name__)
 
-		if serial_port is not None:
-			self._transport = _SerialTransport(serial_port, baudrate)
-			self.logger.warning('Serial transport initialised on ' + serial_port + ' @ ' + str(baudrate) + ' baud')
+		self.serial_mode = serial_port is not None
+		if self.serial_mode:
+			self._mm = _MinimalModbusInstrument(serial_port, baudrate)
+			self.logger.warning('minimalmodbus transport initialised on ' + serial_port + ' @ ' + str(baudrate) + ' baud')
 		else:
 			self._transport = _TcpTransport(ip, port)
 			self.logger.warning('TCP transport initialised on ' + str(ip) + ':' + str(port))
 
 	def clean(self):
+		if self.serial_mode:
+			return  # minimalmodbus manages the port itself; nothing to flush
 		run= True;
 		while run:
 			try:
@@ -201,7 +208,11 @@ class DDModbus:
 				run=False;
 
 	def slaveRx(self,modbusSlaveAddress):
-			try:
+		if self.serial_mode:
+			# Serial mode uses a direct-read loop (see Diematic3Panel._serialLoop);
+			# this path is never reached but returns False as a safe default.
+			return False;
+	try:
 				self._transport.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
 				data=self._transport.recv(2048);
 				self.logger.debug('Frame received: '+data.hex());
@@ -263,6 +274,14 @@ class DDModbus:
 				return False;
 
 	def masterReadAnalog(self,modbusAddress,regAddress,regNb):
+		if self.serial_mode:
+			try:
+				result=self._mm.read_registers(modbusAddress,regAddress,regNb);
+				self.logger.debug('Read OK reg='+str(regAddress)+' nb='+str(regNb));
+				return result;
+			except Exception as e:
+				self.logger.warning('masterReadAnalog failed: '+str(e));
+				return None;
 
 		#build request
 		request=bytearray();
@@ -333,6 +352,15 @@ class DDModbus:
 			return;
 
 	def masterWriteAnalog(self,modbusAddress,regAddress,data):
+		if self.serial_mode:
+			try:
+				self._mm.write_registers(modbusAddress,regAddress,data);
+				self.logger.info('Write OK reg='+str(regAddress)+' data='+str(data));
+				return True;
+			except Exception as e:
+				self.logger.warning('masterWriteAnalog failed: '+str(e));
+				return False;
+
 		#build request
 		request=bytearray();
 		#byte 0
