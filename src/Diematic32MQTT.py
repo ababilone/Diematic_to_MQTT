@@ -95,6 +95,16 @@ def diematicPublish(self):
 	buffer.update('zoneA/nightTemp',floatValue(self.zoneANightTargetTemp));
 	buffer.update('zoneA/antiiceTemp',floatValue(self.zoneAAntiiceTargetTemp));
 
+	#schedules zone A
+	days=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+	for day in days:
+		v=self.scheduleA.get(day);
+		buffer.update('zoneA/schedule/'+day, v if v is not None else '');
+	#schedules ECS
+	for day in days:
+		v=self.scheduleECS.get(day);
+		buffer.update('hotWater/schedule/'+day, v if v is not None else '');
+
 	#area B
 	buffer.update('zoneB/temp',floatValue(self.zoneBTemp));
 	buffer.update('zoneB/mode',self.zoneBMode if self.zoneBMode is not None else '');
@@ -150,6 +160,17 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addNumber('zone_A_temp_night',"Température Nuit Zone A",'zoneA/nightTemp','zoneA/nightTemp/set',5,30,0.5,"°C");
 		hassio.addNumber('zone_A_temp_antiice',"Température Antigel Zone A",'zoneA/antiiceTemp','zoneA/antiiceTemp/set',5,20,0.5,"°C");
 		
+		#schedules zone A
+		day_names=[('monday','Lundi'),('tuesday','Mardi'),('wednesday','Mercredi'),
+		           ('thursday','Jeudi'),('friday','Vendredi'),('saturday','Samedi'),('sunday','Dimanche')];
+		for day, label in day_names:
+			hassio.addText('zone_A_schedule_'+day,"Programme Zone A "+label,
+			               'zoneA/schedule/'+day,'zoneA/schedule/'+day+'/set');
+		#schedules ECS
+		for day, label in day_names:
+			hassio.addText('ecs_schedule_'+day,"Programme ECS "+label,
+			               'hotWater/schedule/'+day,'hotWater/schedule/'+day+'/set');
+
 		#area B
 		hassio.addSensor('zone_B_temp',"Température Zone B",'temperature','zoneB/temp',None,"°C");
 		hassio.addSelect('zone_B_mode',"Mode Zone B",'zoneB/mode','zoneB/mode/set',['AUTO','TEMP JOUR','PERM JOUR','TEMP NUIT','PERM NUIT','ANTIGEL']);
@@ -165,6 +186,7 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 	logger.critical('Connected to MQTT broker');
 	#subscribe to control messages with Q0s of 2
 	client.subscribe(mqttTopicPrefix+'/+/+/set',2);
+	client.subscribe(mqttTopicPrefix+'/+/schedule/+/set',2);
 	client.subscribe(mqttTopicPrefix+'/date/set',2);
 	if hassioDiscoveryEnable:
 		client.subscribe(hassioDiscoveryPrefix+'/status',2);
@@ -240,6 +262,26 @@ def dateSet(client, userdata, message):
 	else:
 		logger.warning('Unknown topic : '+shortTopic);
 
+def scheduleSet(client, userdata, message):
+	# topic: mqttTopicPrefix/zoneA/schedule/monday/set
+	#     or mqttTopicPrefix/hotWater/schedule/monday/set
+	shortTopic=message.topic[len(mqttTopicPrefix):]
+	parts=shortTopic.strip('/').split('/')
+	# parts = ['zoneA','schedule','monday','set']
+	if len(parts)==4 and parts[1]=='schedule' and parts[3]=='set':
+		zone=parts[0];
+		day=parts[2];
+		value=message.payload.decode();
+		logger.info(shortTopic+' : '+value);
+		if zone=='zoneA':
+			panel.setScheduleA(day, value);
+		elif zone=='hotWater':
+			panel.setScheduleECS(day, value);
+		else:
+			logger.warning('Unknown schedule zone: '+zone);
+	else:
+		logger.warning('Unknown schedule topic: '+shortTopic);
+
 def paramSet(client, userdata, message):
 	try:
 		logger.debug('MQTT msg received :'+message.topic+' '+str(message.payload));
@@ -249,7 +291,9 @@ def paramSet(client, userdata, message):
 			modeSet(client, userdata, message);
 		elif (message.topic[-8:]=='date/set'):
 			dateSet(client, userdata, message);
-	except BaseException as exc:	
+		elif '/schedule/' in message.topic and message.topic.endswith('/set'):
+			scheduleSet(client, userdata, message);
+	except BaseException as exc:
 		logger.exception(exc);
 
 def sigterm_exit(signum, frame):
@@ -359,6 +403,7 @@ if __name__ == '__main__':
 		client.will_set(mqttTopicPrefix+'/status',"Offline",1,True)
 		client.connect_async(mqttBrokerHost, int(mqttBrokerPort))
 		client.message_callback_add(mqttTopicPrefix+'/+/+/set',paramSet)
+		client.message_callback_add(mqttTopicPrefix+'/+/schedule/+/set',paramSet)
 		client.message_callback_add(mqttTopicPrefix+'/date/set',paramSet)
 		if hassioDiscoveryEnable:
 			client.message_callback_add(hassioDiscoveryPrefix+'/status',haSendDiscoveryMessages)
