@@ -15,6 +15,8 @@ COPY src/*.py ./
 # Default logging config (seeded into /app/conf/ on first start by run.sh)
 COPY src/conf/logging.conf ./conf_default/logging.conf
 
+RUN mkdir -p /app/log
+
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh
 
