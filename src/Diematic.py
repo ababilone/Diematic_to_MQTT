@@ -48,6 +48,7 @@ class DDREGISTER(IntEnum):
 	MES_DEPART_B=33;     # Zone B supply temperature measurement (0.1°C)
 	CONS_ECS=59;
 	TEMP_ECS=62;
+	TCALC_CHAUD=74;  # Calculated boiler target temperature (temperature the burner is trying to reach)
 	TEMP_CHAUD=75;
 	CONS_ECS_NUIT=96;
 	JOUR=108;
@@ -158,6 +159,7 @@ class Diematic:
 		self.release=None;
 		self.extTemp=None;
 		self.temp=None;
+		self.boilerTargetTemp=None;
 		self.targetTemp=None;
 		self.returnTemp=None;
 		self.waterPressure=None;
@@ -578,6 +580,7 @@ class Diematic:
 		self.release=self.registers[DDREGISTER.CTRL];
 		self.extTemp=self.float10(self.registers[DDREGISTER.TEMP_EXT]);
 		self.temp=self.float10(self.registers[DDREGISTER.TEMP_CHAUD]);
+		self.boilerTargetTemp=self.float10(self.registers[DDREGISTER.TCALC_CHAUD]);
 		self.targetTemp=self.float10(self.registers[DDREGISTER.TCALC_A]);
 		self.returnTemp=self.float10(self.registers[DDREGISTER.RETURN_TEMP]);
 		self.waterPressure=self.float10(self.registers[DDREGISTER.PRESSION_EAU]);

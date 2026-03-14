@@ -66,6 +66,7 @@ def diematicPublish(self):
 	buffer.update('ctrl',intValue(self.release));
 	buffer.update('ext/temp',floatValue(self.extTemp));
 	buffer.update('temp',floatValue(self.temp));
+	buffer.update('boilerTargetTemp',floatValue(self.boilerTargetTemp));
 	buffer.update('targetTemp',floatValue(self.targetTemp));
 	buffer.update('returnTemp',floatValue(self.returnTemp));
 	buffer.update('waterPressure',floatValue(self.waterPressure));
@@ -137,7 +138,8 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addSensor('type',"Type",None,'type',None,None);
 		hassio.addSensor('ctrl',"Controleur",None,'ctrl',None,None);
 		hassio.addSensor('ext_temp',"Température Extérieure",'temperature','ext/temp',None,"°C");
-		hassio.addSensor('boiler_temp',"Température Chaudière",'temperature','temp',None,"°C");	
+		hassio.addSensor('boiler_temp',"Température Chaudière",'temperature','temp',None,"°C");
+		hassio.addSensor('boiler_target_temp',"Température Cible Chaudière",'temperature','boilerTargetTemp',None,"°C");
 		hassio.addSensor('target_temp',"Température Cible",'temperature','targetTemp',None,"°C");
 		hassio.addSensor('return_temp',"Température Retour",'temperature','returnTemp',None,"°C");
 		hassio.addSensor('water_pressure',"Pression d'eau",'pressure','waterPressure',None,"bar");
