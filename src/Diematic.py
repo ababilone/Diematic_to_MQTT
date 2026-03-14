@@ -62,7 +62,11 @@ class DDREGISTER(IntEnum):
 	# Each register holds 16 half-hour slots (bit 0 = first slot of the 8h window)
 	# Reg0: 00:00-07:30  Reg1: 08:00-15:30  Reg2: 16:00-23:30
 	PROG_A_BASE=126;   # Zone A: 126-146 (Mon=126,127,128 … Sun=144,145,146)
+	PROG_B_BASE=147;   # Zone B: 147-167 (Mon=147,148,149 … Sun=165,166,167)
 	PROG_ECS_BASE=189; # ECS  : 189-209 (Mon=189,190,191 … Sun=207,208,209)
+	# Encoding: MSB (bit 15) of each register = first 30-min slot of the 8h window
+	# Reg0: 00:00-07:30  Reg1: 08:00-15:30  Reg2: 16:00-23:30
+	# Example: 0x0003 0xFFFF 0xFF00 → jour 07:00-20:00
 	
 #This class allow to read/write parameters to Diematic regulator with the helo of a RS485/TCPIP converter
 #refresh of attributes From regulator is done roughly every minute
@@ -176,6 +180,7 @@ class Diematic:
 		self._fctBrul=None;
 		self._fuelConsumption=None;
 		self._scheduleA={d:None for d in ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']};
+		self._scheduleB={d:None for d in ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']};
 		self._scheduleECS={d:None for d in ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']};
 		
 	def initRegulator(self):
@@ -363,6 +368,10 @@ class Diematic:
 			return self._scheduleA;
 
 	@property
+	def scheduleB(self):
+			return self._scheduleB;
+
+	@property
 	def scheduleECS(self):
 			return self._scheduleECS;
 
@@ -372,6 +381,16 @@ class Diematic:
 			self.logger.warning('setScheduleA: unknown day '+day);
 			return;
 		base=DDREGISTER.PROG_A_BASE + days.index(day)*3;
+		data=self._encodeScheduleDay(value);
+		self.regUpdateRequest.put(DDModbus.RegisterSet(base, data));
+		self.refreshRequest=True;
+
+	def setScheduleB(self, day, value):
+		days=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+		if day not in days:
+			self.logger.warning('setScheduleB: unknown day '+day);
+			return;
+		base=DDREGISTER.PROG_B_BASE + days.index(day)*3;
 		data=self._encodeScheduleDay(value);
 		self.regUpdateRequest.put(DDModbus.RegisterSet(base, data));
 		self.refreshRequest=True;
@@ -409,12 +428,16 @@ class Diematic:
 		return(retValue);
 
 #decode 3 schedule registers into a human-readable string e.g. "07:00-09:00, 17:30-22:00"
+# Bit ordering: MSB (bit 15) of each register = first 30-min slot of its 8h window
+# Confirmed by datasheet: 0x0003 0xFFFF 0xFF00 → jour 07:00-20:00
 	def _decodeScheduleDay(self, reg0, reg1, reg2):
-		bits = (reg0 & 0xFFFF) | ((reg1 & 0xFFFF) << 16) | ((reg2 & 0xFFFF) << 32);
+		regs = [reg0 & 0xFFFF, reg1 & 0xFFFF, reg2 & 0xFFFF];
+		def slot_on(s):
+			return (regs[s // 16] >> (15 - (s % 16))) & 1;
 		periods = [];
 		start = None;
 		for i in range(49):
-			on = ((bits >> i) & 1) if i < 48 else 0;
+			on = slot_on(i) if i < 48 else 0;
 			if on and start is None:
 				start = i;
 			elif not on and start is not None:
@@ -426,7 +449,7 @@ class Diematic:
 
 #encode a human-readable schedule string back to 3 registers
 	def _encodeScheduleDay(self, schedule_str):
-		bits = 0;
+		regs = [0, 0, 0];
 		if schedule_str.strip().lower() != 'off':
 			for period in schedule_str.split(','):
 				period = period.strip();
@@ -436,11 +459,11 @@ class Diematic:
 					eh, em = map(int, end_str.split(':'));
 					start_slot = sh * 2 + sm // 30;
 					end_slot = 48 if (eh == 24) else eh * 2 + em // 30;
-					for i in range(max(0, start_slot), min(48, end_slot)):
-						bits |= (1 << i);
+					for s in range(max(0, start_slot), min(48, end_slot)):
+						regs[s // 16] |= (1 << (15 - (s % 16)));
 				except Exception:
 					self.logger.warning('_encodeScheduleDay: cannot parse period "'+period+'"');
-		return [bits & 0xFFFF, (bits >> 16) & 0xFFFF, (bits >> 32) & 0xFFFF];
+		return regs;
 
 #this property is used to refresh class functionnal attributes with data extracted from the regulator
 	def refreshAttributes(self):
@@ -584,6 +607,12 @@ class Diematic:
 					self.registers[base_a], self.registers[base_a+1], self.registers[base_a+2]);
 			except KeyError:
 				self._scheduleA[day] = None;
+			base_b = DDREGISTER.PROG_B_BASE + i*3;
+			try:
+				self._scheduleB[day] = self._decodeScheduleDay(
+					self.registers[base_b], self.registers[base_b+1], self.registers[base_b+2]);
+			except KeyError:
+				self._scheduleB[day] = None;
 			base_ecs = DDREGISTER.PROG_ECS_BASE + i*3;
 			try:
 				self._scheduleECS[day] = self._decodeScheduleDay(

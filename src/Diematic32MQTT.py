@@ -95,12 +95,14 @@ def diematicPublish(self):
 	buffer.update('zoneA/nightTemp',floatValue(self.zoneANightTargetTemp));
 	buffer.update('zoneA/antiiceTemp',floatValue(self.zoneAAntiiceTargetTemp));
 
-	#schedules zone A
+	#schedules
 	days=['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
 	for day in days:
 		v=self.scheduleA.get(day);
 		buffer.update('zoneA/schedule/'+day, v if v is not None else '');
-	#schedules ECS
+	for day in days:
+		v=self.scheduleB.get(day);
+		buffer.update('zoneB/schedule/'+day, v if v is not None else '');
 	for day in days:
 		v=self.scheduleECS.get(day);
 		buffer.update('hotWater/schedule/'+day, v if v is not None else '');
@@ -160,13 +162,15 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addNumber('zone_A_temp_night',"Température Nuit Zone A",'zoneA/nightTemp','zoneA/nightTemp/set',5,30,0.5,"°C");
 		hassio.addNumber('zone_A_temp_antiice',"Température Antigel Zone A",'zoneA/antiiceTemp','zoneA/antiiceTemp/set',5,20,0.5,"°C");
 		
-		#schedules zone A
+		#schedules
 		day_names=[('monday','Lundi'),('tuesday','Mardi'),('wednesday','Mercredi'),
 		           ('thursday','Jeudi'),('friday','Vendredi'),('saturday','Samedi'),('sunday','Dimanche')];
 		for day, label in day_names:
 			hassio.addText('zone_A_schedule_'+day,"Programme Zone A "+label,
 			               'zoneA/schedule/'+day,'zoneA/schedule/'+day+'/set');
-		#schedules ECS
+		for day, label in day_names:
+			hassio.addText('zone_B_schedule_'+day,"Programme Zone B "+label,
+			               'zoneB/schedule/'+day,'zoneB/schedule/'+day+'/set');
 		for day, label in day_names:
 			hassio.addText('ecs_schedule_'+day,"Programme ECS "+label,
 			               'hotWater/schedule/'+day,'hotWater/schedule/'+day+'/set');
@@ -275,6 +279,8 @@ def scheduleSet(client, userdata, message):
 		logger.info(shortTopic+' : '+value);
 		if zone=='zoneA':
 			panel.setScheduleA(day, value);
+		elif zone=='zoneB':
+			panel.setScheduleB(day, value);
 		elif zone=='hotWater':
 			panel.setScheduleECS(day, value);
 		else:
