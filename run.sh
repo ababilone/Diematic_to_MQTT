@@ -1,97 +1,74 @@
-#!/usr/bin/with-contenv bashio
+#!/bin/sh
 # ==============================================================================
 # Diematic to MQTT – Home Assistant OS add-on entrypoint
-# Reads options from /data/options.json (via bashio) and generates the
-# Diematic32MQTT.conf before launching the Python script.
+# Reads /data/options.json (standard HA add-on location) with Python and
+# generates Diematic32MQTT.conf, then launches the bridge.
+# No bashio / HA base image required.
 # ==============================================================================
 
-# --------------------------------------------------------------------------
-# Read user options
-# --------------------------------------------------------------------------
-CONNECTION_TYPE=$(bashio::config 'connection_type')
-SERIAL_PORT=$(bashio::config 'serial_port')
-SERIAL_BAUDRATE=$(bashio::config 'serial_baudrate')
-TCP_IP=$(bashio::config 'tcp_ip')
-TCP_PORT=$(bashio::config 'tcp_port')
+set -e
 
-REGULATOR_ADDRESS=$(bashio::config 'regulator_address')
-REGULATOR_TYPE=$(bashio::config 'regulator_type')
-TIMEZONE=$(bashio::config 'timezone')
-TIME_SYNC=$(bashio::config 'time_sync')
-PERIOD=$(bashio::config 'period')
-ENABLE_CIRCUIT_A=$(bashio::config 'enable_circuit_a')
-ENABLE_CIRCUIT_B=$(bashio::config 'enable_circuit_b')
+# Generate config file from HA options (/data/options.json)
+python3 - << 'PYEOF'
+import json, os, sys
 
-MQTT_HOST=$(bashio::config 'mqtt_host')
-MQTT_PORT=$(bashio::config 'mqtt_port')
-MQTT_LOGIN=$(bashio::config 'mqtt_login')
-MQTT_PASSWORD=$(bashio::config 'mqtt_password')
-MQTT_TOPIC_PREFIX=$(bashio::config 'mqtt_topic_prefix')
-MQTT_CLIENT_ID=$(bashio::config 'mqtt_client_id')
+OPTIONS_FILE = '/data/options.json'
 
-HA_DISCOVERY=$(bashio::config 'ha_discovery_enable')
-HA_DISCOVERY_PREFIX=$(bashio::config 'ha_discovery_prefix')
+if not os.path.exists(OPTIONS_FILE):
+    print(f'ERROR: {OPTIONS_FILE} not found – is this running as an HA add-on?', flush=True)
+    sys.exit(1)
 
-# --------------------------------------------------------------------------
-# Validate serial device when connection_type = serial
-# --------------------------------------------------------------------------
-if [ "${CONNECTION_TYPE}" = "serial" ]; then
-    if [ ! -e "${SERIAL_PORT}" ]; then
-        bashio::log.warning "Serial device ${SERIAL_PORT} not found."
-        bashio::log.warning "Make sure the USB RS485 adapter is plugged in and the port is correct."
-    else
-        bashio::log.info "Serial device ${SERIAL_PORT} found."
-    fi
-fi
+with open(OPTIONS_FILE) as f:
+    o = json.load(f)
 
-# --------------------------------------------------------------------------
-# Generate configuration file
-# --------------------------------------------------------------------------
-mkdir -p /app/conf
+os.makedirs('/app/conf', exist_ok=True)
 
-bashio::log.info "Generating Diematic32MQTT.conf (connection_type=${CONNECTION_TYPE})"
-
-cat > /app/conf/Diematic32MQTT.conf << CONFEOF
+conf = f"""\
 [Modbus]
-connectionType: ${CONNECTION_TYPE}
-serialPort: ${SERIAL_PORT}
-baudrate: ${SERIAL_BAUDRATE}
-ip: ${TCP_IP}
-port: ${TCP_PORT}
-regulatorAddress: ${REGULATOR_ADDRESS}
+connectionType: {o['connection_type']}
+serialPort: {o['serial_port']}
+baudrate: {o['serial_baudrate']}
+ip: {o['tcp_ip']}
+port: {o['tcp_port']}
+regulatorAddress: {o['regulator_address']}
 interfaceAddress: 0x32
 
 [MQTT]
-brokerHost: ${MQTT_HOST}
-brokerPort: ${MQTT_PORT}
-brokerLogin: ${MQTT_LOGIN}
-brokerPassword: ${MQTT_PASSWORD}
-topicPrefix: ${MQTT_TOPIC_PREFIX}
-clientId: ${MQTT_CLIENT_ID}
+brokerHost: {o['mqtt_host']}
+brokerPort: {o['mqtt_port']}
+brokerLogin: {o.get('mqtt_login', '')}
+brokerPassword: {o.get('mqtt_password', '')}
+topicPrefix: {o['mqtt_topic_prefix']}
+clientId: {o['mqtt_client_id']}
 
 [Boiler]
-regulatorType: ${REGULATOR_TYPE}
-timezone: ${TIMEZONE}
-timeSync: ${TIME_SYNC}
-period: ${PERIOD}
-enable_circuit_A: ${ENABLE_CIRCUIT_A}
-enable_circuit_B: ${ENABLE_CIRCUIT_B}
+regulatorType: {o['regulator_type']}
+timezone: {o['timezone']}
+timeSync: {o['time_sync']}
+period: {o['period']}
+enable_circuit_A: {o['enable_circuit_a']}
+enable_circuit_B: {o['enable_circuit_b']}
 
 [Home Assistant]
-MQTT_DiscoveryEnable: ${HA_DISCOVERY}
-discovery_prefix: ${HA_DISCOVERY_PREFIX}
-CONFEOF
+MQTT_DiscoveryEnable: {1 if o['ha_discovery_enable'] else 0}
+discovery_prefix: {o['ha_discovery_prefix']}
+"""
 
-# --------------------------------------------------------------------------
-# Install logging config (keep user's version if already present)
-# --------------------------------------------------------------------------
+with open('/app/conf/Diematic32MQTT.conf', 'w') as f:
+    f.write(conf)
+
+print(f"Config generated (connection_type={o['connection_type']})", flush=True)
+
+# Warn if serial device not present
+if o['connection_type'] == 'serial' and not os.path.exists(o['serial_port']):
+    print(f"WARNING: serial device {o['serial_port']} not found – check your USB adapter.", flush=True)
+PYEOF
+
+# Seed default logging config on first start
 if [ ! -f /app/conf/logging.conf ]; then
     cp /app/conf_default/logging.conf /app/conf/logging.conf
 fi
 
-# --------------------------------------------------------------------------
-# Launch
-# --------------------------------------------------------------------------
-bashio::log.info "Starting Diematic to MQTT bridge..."
+echo "Starting Diematic to MQTT bridge..."
 cd /app
 exec python3 Diematic32MQTT.py
