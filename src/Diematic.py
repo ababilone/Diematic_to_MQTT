@@ -65,9 +65,12 @@ class DDREGISTER(IntEnum):
 class Diematic:
 	updateCallback=None;
 
-	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False,serial_port=None,baudrate=9600):
+	def __init__(self,ip,port,regulatorAddress,interfaceAddress,boilerTimezone='',syncTime=False,serial_port=None,baudrate=9600,nozzleFlowRate=0):
 		#default refresh period
 		REFRESH_PERIOD=60
+
+		#fuel consumption per hour in liters (nozzle flow rate gal/h × 3.785411784 L/gal)
+		self._fuelConsumptionPerHour = nozzleFlowRate * 3.785411784;
 
 		#logger
 		self.logger = logging.getLogger(__name__);
@@ -166,6 +169,7 @@ class Diematic:
 		self._zoneBAntiiceTargetTemp=None;
 		self._nbImpuls=None;
 		self._fctBrul=None;
+		self._fuelConsumption=None;
 		
 	def initRegulator(self):
 		#RS485 converter connexion init
@@ -343,6 +347,10 @@ class Diematic:
 	def fctBrul(self):
 			return self._fctBrul;
 
+	@property
+	def fuelConsumption(self):
+			return self._fuelConsumption;
+
 #decoding property to decode Modbus encoded float values	
 	def float10(self,reg):
 		if (reg==0xFFFF):
@@ -486,13 +494,17 @@ class Diematic:
 			self._zoneBNightTargetTemp=None;
 			self._zoneBAntiiceTargetTemp=None;
 
-		#for Diematic Delta regulator only
-		if type(self).__name__ == "DiematicDeltaPanel":
-			# nbImpuls coded in hex on 2 registers
-			self._nbImpuls = self.hex2reg(DDREGISTER.NB_IMPULS_DIX, DDREGISTER.NB_IMPULS_UNIT);
-			
-			# fctBrul coded in hex on 2 registers
-			self._fctBrul = self.hex2reg(DDREGISTER.FCT_BRUL_DIX, DDREGISTER.FCT_BRUL_UNIT);
+		# nbImpuls coded in hex on 2 registers
+		self._nbImpuls = self.hex2reg(DDREGISTER.NB_IMPULS_DIX, DDREGISTER.NB_IMPULS_UNIT);
+
+		# fctBrul coded in hex on 2 registers
+		self._fctBrul = self.hex2reg(DDREGISTER.FCT_BRUL_DIX, DDREGISTER.FCT_BRUL_UNIT);
+
+		# fuel consumption in liters
+		if self._fctBrul is not None and self._fuelConsumptionPerHour > 0:
+			self._fuelConsumption = round(self._fctBrul * self._fuelConsumptionPerHour, 1);
+		else:
+			self._fuelConsumption = None;
 
 		self.updateCallback();
 

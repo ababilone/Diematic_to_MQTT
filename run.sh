@@ -53,6 +53,7 @@ timeSync: {o['time_sync']}
 period: {o['period']}
 enable_circuit_A: {o['enable_circuit_a']}
 enable_circuit_B: {o['enable_circuit_b']}
+nozzleFlowRate: {g('nozzle_flow_rate', 0)}
 
 [Home Assistant]
 MQTT_DiscoveryEnable: {1 if o['ha_discovery_enable'] else 0}

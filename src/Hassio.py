@@ -118,6 +118,23 @@ class Hassio:
 		#send discovery message
 		self.mqtt.publish(discoveryTopic,json.dumps(payload),1,False);	
 
+	def addButton(self,object_id,name,shortCommandTopic,payload_press):
+		#build discovery topic
+		discoveryTopic=self.discovery_prefix+'/button/'+self.clientId+'/'+object_id+'/config';
+		#build discovery message payload
+		payload={"name":name};
+		payload["default_entity_id"]='button.'+object_id;
+		payload["unique_id"]=self.clientId+'.'+object_id;
+		payload["command_topic"]=self.topicRoot+'/'+shortCommandTopic;
+		payload["payload_press"]=payload_press;
+		payload["availability_topic"]=self.availabilityTopic;
+		payload["payload_available"]=self.payload_available;
+		payload["payload_not_available"]=self.payload_not_available;
+		payload["qos"]=2;
+		payload['device'] = self.device
+		#send discovery message
+		self.mqtt.publish(discoveryTopic,json.dumps(payload),1,False);
+
 	def addSwitch(self,object_id,name,shortStateTopic,shortCommandTopic,payload_off,payload_on):
 		#build discovery topic
 		discoveryTopic=self.discovery_prefix+'/switch/'+self.clientId+'/'+object_id+'/config';

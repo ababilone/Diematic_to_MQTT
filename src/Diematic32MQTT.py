@@ -78,6 +78,7 @@ def diematicPublish(self):
 	buffer.update('alarm',json.dumps(self.alarm) if self.alarm is not None else '');
 	buffer.update('nbImpuls',intValue(self.nbImpuls));
 	buffer.update('fctBrul',intValue(self.fctBrul));
+	buffer.update('fuelConsumption',floatValue(self.fuelConsumption));
 
 	#hotwater
 	buffer.update('hotWater/pump',intValue(self.hotWaterPump));
@@ -110,7 +111,7 @@ def haSendDiscoveryMessages(client, userdata, message):
 		logger.info('Sending HA discovery messages');
 		
 		#boiler
-		hassio.addSensor('heater_datetime',"Horloge Chaudière",None,'date',"{{ as_timestamp(value) |timestamp_custom ('%d/%m/%Y %H:%M') }}",None);
+		hassio.addSensor('heater_datetime',"Horloge Chaudière",'timestamp','date',None,None);
 		hassio.addSwitch('heater_datetime_set',"Synchro Horloge",'unknown','date/set','--','Now');
 		hassio.addSensor('type',"Type",None,'type',None,None);
 		hassio.addSensor('ctrl',"Controleur",None,'ctrl',None,None);
@@ -127,14 +128,16 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addSensor('pump_power',"Puissance Pompe",'power_factor','pumpPower',None,"%");
 		hassio.addSensor('alarm',"Etat",None,'alarm',"{{ value_json.txt}}",None);
 		hassio.addSensor('alarm_id',"N° Erreur",None,'alarm',"{{ value_json.id}}",None);
-		hassio.addSensor('nb_impuls',"Impulsions Bruleur",None,'nbImpuls',None,None);	
+		hassio.addSensor('nb_impuls',"Impulsions Bruleur",None,'nbImpuls',None,None);
 		hassio.addSensor('fct_brul',"Fonctionnement Bruleur",None,'fctBrul',None,"hours");
+		hassio.addSensor('fuel_consumption',"Consommation Mazout",'volume','fuelConsumption',None,"L");
 		
 		#hot water
 		hassio.addBinarySensor('hot_water_pump',"Pompe ECS",None,'hotWater/pump',"1","0");	
 		hassio.addSensor('hot_water_temp',"Température ECS",'temperature','hotWater/temp',None,"°C");
 		hassio.addSelect('hot_water_mode',"Mode ECS",'hotWater/mode','hotWater/mode/set',['AUTO','TEMP','PERM']);
 		hassio.addSensor('hot_water_mode',"Mode ECS",None,'hotWater/mode',None,None);
+		hassio.addButton('hot_water_boost',"Démarrer chauffe ECS",'hotWater/mode/set','TEMP');
 		hassio.addNumber('hot_water_temp_day',"Température ECS Jour",'hotWater/dayTemp','hotWater/dayTemp/set',10,80,5,"°C");
 		hassio.addNumber('hot_water_temp_night',"Température ECS Nuit",'hotWater/nightTemp','hotWater/nightTemp/set',10,80,5,"°C");
 		
@@ -333,6 +336,10 @@ if __name__ == '__main__':
 		#set refresh period, with a minimum of 10s
 		panel.refreshPeriod=max(period,10);
 		
+		#nozzle flow rate for fuel consumption calculation (gal/h, 0 = disabled)
+		nozzleFlowRate=float(config.get('Boiler','nozzleFlowRate',fallback='0'));
+		panel._fuelConsumptionPerHour=nozzleFlowRate * 3.785411784;
+
 		#force circuit A or B to be enables if requested
 		panel.forceCircuitA=config.getboolean('Boiler','enable_circuit_A',fallback=False);
 		panel.forceCircuitB=config.getboolean('Boiler','enable_circuit_B',fallback=False);

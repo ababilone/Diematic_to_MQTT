@@ -25,6 +25,7 @@ options:
   period: 10
   enable_circuit_a: false
   enable_circuit_b: false
+  nozzle_flow_rate: 0.0
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_login: ""
@@ -49,6 +50,7 @@ schema:
   period: int
   enable_circuit_a: bool
   enable_circuit_b: bool
+  nozzle_flow_rate: float
   mqtt_host: str
   mqtt_port: int
   mqtt_login: str?
