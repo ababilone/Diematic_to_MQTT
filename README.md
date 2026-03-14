@@ -1,100 +1,155 @@
-<h2>Making of a MQTT interface for a De Dietrich boiler fitted with a Diematic 3 regulator</h2>
+<h2>MQTT interface for De Dietrich boilers with Diematic 3 / 4 / Delta regulator</h2>
 
-The goal is to be able to control boiler's general setting with a smartphone using a MQTT client or through a domotic software.
+Control and monitor your De Dietrich boiler through MQTT using a Raspberry Pi (or any Linux host running Home Assistant OS).
 
-Reminder : Diematic 3 regulator has a built-in control board like :
+> **This is a fork of [Benoit3/Diematic_to_MQTT](https://github.com/Benoit3/Diematic_to_MQTT)** with two major additions:
+> 1. **USB RS485 serial transport** – connect a cheap USB RS485 dongle directly to your HA host without a network adapter.
+> 2. **Home Assistant OS native add-on** – install and configure everything from the HA UI without touching the command line.
 
-![Diematic 3 Regulation Control Panel](ReadMeImages/DiematicRegul.png)
+---
 
-And a remote control board like :
+<h2>Hardware</h2>
 
-![Diematic 3 Remote Control](ReadMeImages/DiematicCdA.png)
+The Diematic 3 regulator exposes a **Modbus RTU RS485** port (Mini-DIN 4).
 
-I remind that if you use information and software available in this repository, It's mean that you feel enough qualified to manage what you are doing and its impacts.
+| Adapter | Config |
+|---|---|
+| USB RS485 dongle (CH340, FTDI, …) | `connectionType: serial` |
+| RS485-to-Ethernet/Wi-Fi (USR-TCP232-306, …) | `connectionType: tcp` |
 
-<h2>General Design</h2>
-<h3>ModBus Interface Description</h3>
-
-Diematic 3 regulator is fitted with a ModBus interface which allows to read and modify measures and parameters.
-
-There's very few doucmentation on the specification of the De Dietrich ModBus implementation. Used documents can be found on the web by using key words "diematic modbus register"
-
-ModBus rely on data exchange on a serial bus. The Diematic 3 implementation is done with following details :
-
-    RTU (binary) mode, on a RS485 bus
-    9600 bauds, 8 bits, no parity, 1 stop bit
-    boiler address is 0x0A (hexadecimal)
-
-One specifity of the De Dietrich implementation is the dual-master :
-    The boiler transmit ModBus command during 5s as a ModBus master and then remain silent during 5 next seconds  waiting for possible ModBus commandas slave (address: 0x0A).
-
-This particularty will have some impact on the behviour of our system : reponse time will be between 5 and 10 s (5s waiting for boiler slave mode followed by the data transmission).
-
-My main requirements to design the solution were:
-- to not spend too much time
-- to not spend too much money
-as at the beginning I was not sure to achieved something usable.
-
-It's why I chose to use following elements :
-- an interface card USR-TCP-232-24, replaced later by an USR-TCP-232-306 which is delivered in an enclosure and has bigger range for power supply voltage. USR-TCP-232-306 specifications can be found on USR-IOT website and bought averywhere. The interface RS485 port is connected on the ModBus port of the Boiler on on side and to the LAN on the other side. If you need it, you can use some WIFI version.
-- a Raspberry with raspian installed and Python 3.6 or more. Python script have been tested with python 3.8. A diffculty with Raspberry is to no corrupt the SD card on power loss. I've solved this issue using a backup battery. If you've a NAS already robust agains that kind of problem, you also be able to use it.
-- a MQTT broker, which can be installed on the same raspberry or elsewhere
-- some python scripts to send commands received as MQTT messages to the boiler, and provide boiler status always through MQTT messages.
-
-Internet box settings to allow external access to the NAS while complying with good security practice wont be described here. Several solutions can be used according your paranoid level.
-
-![Web Interface Design](ReadMeImages/DiematicMQTTInterfaceDesign.png)
-
-<h2>Making of</h2>
-<h3>Wiring</h3>
-
-You can start with wiring the USR-TCP-232-306 to the boiler using a 2 wire cable and a mini DIN connector with four pins. The cable schematic is below:
+### Wiring (Mini-DIN 4)
 
 ![ModBus wiring](ReadMeImages/ModBusMiniDinConnection.png)
 
-<h3>Module settings</h3>
-You can now go on with setting the USR-TCP-232-306  module with a standard web brother :
+```
+Pin 1 (D+)  → RS485 A+
+Pin 2 (D-)  → RS485 B-
+Pin 3 (GND) → GND  (optional but recommended)
+```
 
-![Module setup](ReadMeImages/USR-TCP232-306-config.png)
+### Modbus parameters
 
-Remark : I let you read the doc to configure IP parameters of the USR-TCP-232-306. The TCP server address of the above page is not used
+| Parameter | Value |
+|---|---|
+| Mode | RTU (binary) |
+| Baud rate | 9600 |
+| Frame | 8N1 |
+| Boiler address | `0x0A` (10 decimal) |
 
-<h3>Python script installation</h3>
+> **Dual-master timing** – The Diematic 3 alternates between acting as Modbus master (5 s) and slave (5 s). Response times are therefore 5–10 s; keep `period` ≥ 10 s.
 
-Instructions are available in the [Wiki](https://github.com/Benoit3/Diematic_to_MQTT/wiki)
+---
 
-<h3>Home Assistant Integration</h3>
+<h2>Installation</h2>
 
-The Home Assistant discovery mode is enable by default. Check parameters in the Diematic32MQTT.conf file.
+<h3>Option A – Home Assistant OS Add-on (recommended)</h3>
 
-You will just have to connect your hassio to your MQTT broker and define your cards.
+1. In Home Assistant go to **Settings → Add-ons → Add-on store → ⋮ → Repositories**.
+2. Add the URL of this repository.
+3. Install **Diematic to MQTT** from the list.
+4. Fill in the options (see `ha-addon/DOCS.md` or the HA UI info tab) and click **Start**.
+
+The add-on generates its own configuration file from the HA options and runs the Python bridge in an isolated container.
+Serial (`/dev/ttyUSB*`) and UART devices are automatically exposed to the container via the `uart: true` flag.
+
+<h3>Option B – Docker (standalone)</h3>
+
+```bash
+docker run -d \
+  --device /dev/ttyUSB1 \
+  -v $(pwd)/src/conf:/app/conf \
+  ghcr.io/ababilone/diematic_to_mqtt:latest
+```
+
+Edit `src/conf/Diematic32MQTT.conf` before starting (see configuration below).
+
+<h3>Option C – Python directly (Raspberry Pi / Raspbian)</h3>
+
+```bash
+pip3 install -r src/requirements.txt
+cd src
+python3 Diematic32MQTT.py
+```
+
+See the [Wiki](https://github.com/Benoit3/Diematic_to_MQTT/wiki) for the systemd service setup.
+
+---
+
+<h2>Configuration (Diematic32MQTT.conf)</h2>
+
+```ini
+[Modbus]
+# connectionType: serial  → USB RS485 adapter
+# connectionType: tcp     → RS485-to-Ethernet adapter (original)
+connectionType: serial
+
+# Serial mode
+serialPort: /dev/ttyUSB1
+baudrate: 9600
+
+# TCP mode (used when connectionType = tcp)
+ip: 192.168.1.X
+port: 20108
+
+regulatorAddress: 0x0A
+interfaceAddress: 0x32
+
+[MQTT]
+brokerHost: localhost
+brokerPort: 1883
+brokerLogin:
+brokerPassword:
+topicPrefix: home/heater
+clientId: boiler
+
+[Boiler]
+regulatorType: Diematic3   # Diematic3 | Diematic4 | DiematicDelta
+timezone: Europe/Paris
+timeSync: False
+period: 10
+enable_circuit_A: False
+enable_circuit_B: False
+
+[Home Assistant]
+MQTT_DiscoveryEnable: 1
+discovery_prefix: homeassistant
+```
+
+---
+
+<h2>Home Assistant Integration</h2>
+
+MQTT discovery is enabled by default. Once the bridge is running, the following entities appear automatically:
+
+**Sensors** – boiler temperature, return temperature, exhaust temperature, external temperature, zone A/B ambient temperature, ECS temperature, water pressure, burner power, fan speed, ionisation current, pump power, alarm.
+
+**Binary sensors** – burner status, zone A/B pump, hot-water pump.
+
+**Selects (control)** – zone A mode, zone B mode, hot-water mode.
+
+**Numbers (control)** – day/night/antifreeze setpoints for zone A, zone B, and hot water.
+
+**Switch** – sync boiler clock to HA time.
 
 ![Hassio_Control](ReadMeImages/HassioControlCard.png) ![Hassio_Control](ReadMeImages/HassioMonitoringCard.png)
 ![Hassio_Control](ReadMeImages/HassioSettingCard.png)
 
-<h3>To use client Dash MQTT for android</h3>
+Make sure your MQTT integration birth-message topic is `homeassistant/status` with payload `online` for discovery to work after a restart.
 
-With this [client](https://play.google.com/store/apps/details?id=net.routix.mqttdash&hl=fr&gl=US) you can get easily custom dashboard like this one:
+---
 
-![Dash MQTT](ReadMeImages/MQTTDash.png)
+<h2>Known limitations</h2>
 
-<h3>Limitations</h3>
+- Remote display heating mode not updatable without a workaround.
+- No support for switching between programs (P1–P4).
+- ECS pump info not fully reliable.
+- Permanent antifreeze mode replaces temporary antifreeze (hardware limitation).
+- Pump power stays at 100 % when all pumps are off.
 
-With this release 313 (boiler bought end of 2006), some limitations has been solved with sometimes the help of workaround. Temporary anti freezing, is no more available as it was not correctly settable through the Diematic 3 Modbus interface, but permanent antifreezing mode has replaced it. Notice that, in this case the remote control shows below display, which is normal (you can get it with the mode button selecting antifreeze during 5s) :
-![AntiFreeze](ReadMeImages/AntiFreeze.png)
+---
 
-Main found limitations of the Diematic 3 interfaces are :
-- update of remote display heating mode not updatable without "heavy" workaround
-- no possibility to switch between programs (P1..P4)
-- Pump ECS (water heater) info not robust
-- no possibility to use without issue temporary freezing mode
-- pump power stays at 100% when all pumps are off
+<h2>References</h2>
 
-<h3>Diematic4 iSystem Compatibility</h3>
-
-Basic compatibility has been enabled for Diematic4. You can select Diematic4 in the configuration file and test. Consult HA forum for more details
-<h3>Experience return</h3>
-
-[Here](https://community.home-assistant.io/t/de-dietrich-diematic-modbus-to-mqtt-interface/363086/27?u=benoits) is an interesting application to monitor gaz consumption and level inside a gaz tank
-
-For further info you can go to [Fibaro forum](https://www.domotique-fibaro.fr/topic/5677-de-dietrich-diematic-isystem/) or to the [Home Assistant Community](https://community.home-assistant.io/t/de-dietrich-diematic-modbus-to-mqtt-interface/363086)
+- Original project: [Benoit3/Diematic_to_MQTT](https://github.com/Benoit3/Diematic_to_MQTT)
+- [Home Assistant Community thread](https://community.home-assistant.io/t/de-dietrich-diematic-modbus-to-mqtt-interface/363086)
+- [Fibaro forum (French)](https://www.domotique-fibaro.fr/topic/5677-de-dietrich-diematic-isystem/)
