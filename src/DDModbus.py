@@ -53,27 +53,35 @@ class _TcpTransport:
 class _MinimalModbusInstrument:
 	"""Wraps minimalmodbus.Instrument for direct RTU reads/writes over USB serial.
 
-	Creates one Instrument per slave address (cached) with
-	CLOSE_PORT_AFTER_EACH_CALL=True so the port is released between
-	transactions and the boiler can use the bus freely.
+	Keeps ONE serial port open for the lifetime of the object and shares it
+	between passive bus listening (listen()) and actual Modbus transactions
+	(read_registers / write_registers).  A single persistent fd avoids the
+	open/close cycling that can toggle RS485 direction-control signals and
+	disturb the boiler.
 	"""
 
 	def __init__(self, port, baudrate=9600):
 		import minimalmodbus
-		minimalmodbus.CLOSE_PORT_AFTER_EACH_CALL = True
+		import serial as _serial
+		# Keep the port open permanently; we manage open/close ourselves.
+		minimalmodbus.CLOSE_PORT_AFTER_EACH_CALL = False
 		self._mm = minimalmodbus
 		self._port = port
 		self._baudrate = baudrate
 		self._cache = {}  # Instrument objects keyed by slave address
+		# Persistent serial handle shared by listen() and minimalmodbus.
+		self._serial = _serial.Serial(
+			port=port, baudrate=baudrate,
+			bytesize=8, parity='N', stopbits=1, timeout=0.5
+		)
 
 	def _inst(self, slave_addr):
 		if slave_addr not in self._cache:
+			# Create the instrument (minimalmodbus opens the port internally),
+			# then immediately close that extra fd and reuse our persistent one.
 			inst = self._mm.Instrument(self._port, slave_addr)
-			inst.serial.baudrate = self._baudrate
-			inst.serial.bytesize = 8
-			inst.serial.parity = self._mm.serial.PARITY_NONE
-			inst.serial.stopbits = 1
-			inst.serial.timeout = 1
+			inst.serial.close()        # close the fd minimalmodbus opened
+			inst.serial = self._serial # share our persistent fd
 			inst.mode = self._mm.MODE_RTU
 			inst.debug = False
 			self._cache[slave_addr] = inst
@@ -81,32 +89,27 @@ class _MinimalModbusInstrument:
 
 	def read_registers(self, slave_addr, reg_address, reg_count):
 		"""Returns dict mapping register address -> int value."""
+		self._serial.timeout = 1
 		values = self._inst(slave_addr).read_registers(reg_address, reg_count)
 		return {reg_address + i: values[i] for i in range(reg_count)}
 
 	def write_registers(self, slave_addr, reg_address, data):
 		"""Writes a list of int values; returns True on success."""
+		self._serial.timeout = 1
 		self._inst(slave_addr).write_registers(reg_address, data)
 		return True
 
 	def listen(self, timeout):
 		"""Return True if any bytes are received within *timeout* seconds.
 
-		Opens and closes the serial port on each call so it never conflicts
-		with minimalmodbus (which also opens/closes per call when
-		CLOSE_PORT_AFTER_EACH_CALL=True).  Used by slaveRx() to detect
-		whether the boiler is actively transmitting on the bus.
+		Uses the persistent serial fd (no open/close overhead).  Bytes left
+		in the OS buffer from a previous transmission are also counted, which
+		is fine: the state machine transitions to MASTER only after the buffer
+		has drained completely AND stayed quiet for 5+ seconds.
 		"""
-		import serial as _serial
-		s = _serial.Serial(
-			port=self._port, baudrate=self._baudrate,
-			bytesize=8, parity='N', stopbits=1, timeout=timeout
-		)
-		try:
-			data = s.read(256)
-			return len(data) > 0
-		finally:
-			s.close()
+		self._serial.timeout = timeout
+		data = self._serial.read(256)
+		return len(data) > 0
 
 
 class slaveRequest:
