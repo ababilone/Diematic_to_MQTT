@@ -40,8 +40,8 @@ class Diematic3Panel(Diematic):
 		else:
 			return(False);
 			
-		#update registers 128->209 (Zone A schedule 128-146, ECS schedule 189-209)
-		reg=self.modBusInterface.masterReadAnalog(self.regulatorAddress,128,82);
+		#update registers 128->252 (schedules 128-209, burner unit counters 251-252)
+		reg=self.modBusInterface.masterReadAnalog(self.regulatorAddress,128,125);
 		if (reg is not None):
 			self.registers.update(reg);
 		else:
