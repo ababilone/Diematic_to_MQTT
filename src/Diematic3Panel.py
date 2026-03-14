@@ -191,142 +191,89 @@ class Diematic3Panel(Diematic):
 			#reset timeout
 			self.lastSynchroTimestamp=time.time();
 			while self.run:
+				# Unified dual-master state machine for both serial and TCP.
+				# For serial: slaveRx() uses a raw listen() to detect boiler traffic.
+				# For TCP:    slaveRx() reads from the TCP socket as before.
 
-				# ----------------------------------------------------------------
-				# Serial mode: direct reads via minimalmodbus on the configured
-				# period – no bus-traffic monitoring needed.
-				# ----------------------------------------------------------------
-				if self.modBusInterface.serial_mode:
-					do_refresh=(
-						((time.time()-self.lastSynchroTimestamp) > (self.refreshPeriod-5))
-						or self.refreshRequest
-					);
-					if do_refresh:
+				#wait for a frame received
+				frame=self.modBusInterface.slaveRx(self.interfaceAddress);
+
+				#depending current bus mode
+				if (self.busStatus!=DDModBusStatus.SLAVE):
+					if (frame):
+						#switch mode to slave
+						self.busStatus=DDModBusStatus.SLAVE;
+						self.slaveTime=time.time();
+						self.logger.debug('Bus status switched to SLAVE');
+
+				elif (self.busStatus==DDModBusStatus.SLAVE):
+					slaveModeDuration=time.time()-self.slaveTime;
+					#if no frame have been received and slave mode has lasted at least 5s
+					if ((not frame) and (slaveModeDuration>5)):
+						#switch mode to MASTER
+						self.masterTime=time.time();
+						self.busStatus=DDModBusStatus.MASTER;
+						self.logger.debug('Bus status switched to MASTER after '+str(slaveModeDuration));
+
+						#if the state wasn't still synchronised
+						if (not self.masterSlaveSynchro):
+							self.logger.info('ModBus Master Slave Synchro OK');
+							self.masterSlaveSynchro=True;
+
 						#mode A register update if needed
 						self.modeAUpdate();
+
 						#mode B register update if needed
 						self.modeBUpdate();
-						#process all pending generic register writes
-						while not self.regUpdateRequest.empty():
-							regSet=self.regUpdateRequest.get(False);
+
+						#while general register update request are pending and Master mode is started since less than 2s
+						while (not(self.regUpdateRequest.empty()) and ((time.time()-self.masterTime) < 2)):
+							regSet=self.regUpdateRequest.get(False)
 							self.logger.debug('Write Request :'+str(regSet.address)+':'+str(regSet.data));
-							if not self.modBusInterface.masterWriteAnalog(self.regulatorAddress,regSet.address,regSet.data):
-								self.logger.warning('ModBus Write Error');
+							#write to Analog registers
+							if ( not self.modBusInterface.masterWriteAnalog(self.regulatorAddress,regSet.address,regSet.data)):
+								#And cancel Master Slave Synchro Flag in case of error
+								self.logger.warning('ModBus Master Slave Synchro Error');
 								self.masterSlaveSynchro=False;
 							self.refreshRequest=True;
-						#read all registers from the regulator
-						if self.refreshRegisters():
-							self.lastSynchroTimestamp=time.time();
-							self.refreshAttributes();
-							self.refreshRequest=False;
-							if not self.masterSlaveSynchro:
-								self.logger.info('ModBus Serial Read OK');
-								self.masterSlaveSynchro=True;
-							#check time drift
-							now=datetime.datetime.now().astimezone();
-							self.logger.debug('Now :'+str(now));
-							self.logger.debug('Boiler :'+str(self.datetime));
-							drift=(now-self.datetime).total_seconds();
-							self.logger.debug('Drift :'+str(drift));
-							if (self.syncTime and abs(drift)>=60):
-								self.overDriftCounter+=1;
-								self.logger.debug('Drift Counter:'+str(self.overDriftCounter));
-								if self.overDriftCounter>=6:
-									self.overDriftCounter=0;
-									self.logger.critical('Sync Time: Set boiler time to :'+str(now));
-									self.datetime=now;
-							else:
-								self.overDriftCounter=0;
-						else:
-							self.logger.warning('ModBus Read Error');
-							self.masterSlaveSynchro=False;
-					else:
-						time.sleep(1);
 
-				# ----------------------------------------------------------------
-				# TCP mode: dual-master state machine (original behaviour).
-				# ----------------------------------------------------------------
-				else:
-					#wait for a frame received
-					frame=self.modBusInterface.slaveRx(self.interfaceAddress);
+						#update registers, todo condition for refresh launch
+						if (((time.time()-self.lastSynchroTimestamp) > (self.refreshPeriod-5)) or self.refreshRequest):
+							if (self.refreshRegisters()):
+								self.lastSynchroTimestamp=time.time();
 
-					#depending current bus mode
-					if (self.busStatus!=DDModBusStatus.SLAVE):
-						if (frame):
-							#switch mode to slave
-							self.busStatus=DDModBusStatus.SLAVE;
-							self.slaveTime=time.time();
-							self.logger.debug('Bus status switched to SLAVE');
+								#refresh regulator attribute
+								self.refreshAttributes();
 
-					elif (self.busStatus==DDModBusStatus.SLAVE):
-						slaveModeDuration=time.time()-self.slaveTime;
-						#if no frame have been received and slave happen during at least 5s
-						if ((not frame) and (slaveModeDuration>5)):
-							#switch mode to MASTER
-							self.masterTime=time.time();
-							self.busStatus=DDModBusStatus.MASTER;
-							self.logger.debug('Bus status switched to MASTER after '+str(slaveModeDuration));
+								#clear Flag
+								self.refreshRequest=False;
 
-							#if the state wasn't still synchronised
-							if (not self.masterSlaveSynchro):
-								self.logger.info('ModBus Master Slave Synchro OK');
-								self.masterSlaveSynchro=True;
+								#check time drift
+								now = datetime.datetime.now().astimezone();
+								self.logger.debug('Now :' + str(now));
+								self.logger.debug('Boiler :' + str(self.datetime));
+								drift = (now - self.datetime).total_seconds();
+								self.logger.debug('Drift :' + str(drift));
 
-							#mode A register update if needed
-							self.modeAUpdate();
-
-							#mode B register update if needed
-							self.modeBUpdate();
-
-							#while general register update request are pending and Master mode is started since less than 2s
-							while (not(self.regUpdateRequest.empty()) and ((time.time()-self.masterTime) < 2)):
-								regSet=self.regUpdateRequest.get(False)
-								self.logger.debug('Write Request :'+str(regSet.address)+':'+str(regSet.data));
-								#write to Analog registers
-								if ( not self.modBusInterface.masterWriteAnalog(self.regulatorAddress,regSet.address,regSet.data)):
-									#And cancel Master Slave Synchro Flag in case of error
-									self.logger.warning('ModBus Master Slave Synchro Error');
-									self.masterSlaveSynchro=False;
-								self.refreshRequest=True;
-
-
-							#update registers, todo condition for refresh launch
-							if (((time.time()-self.lastSynchroTimestamp) > (self.refreshPeriod-5)) or self.refreshRequest):
-								if (self.refreshRegisters()):
-									self.lastSynchroTimestamp=time.time();
-
-									#refresh regulator attribute
-									self.refreshAttributes();
-
-									#clear Flag
-									self.refreshRequest=False;
-
-									#check time drift
-									now = datetime.datetime.now().astimezone();
-									self.logger.debug('Now :' + str(now));
-									self.logger.debug('Boiler :' + str(self.datetime));
-									drift = (now - self.datetime).total_seconds();
-									self.logger.debug('Drift :' + str(drift));
-
-									#if drift is more than 60 s
-									if (self.syncTime and abs(drift) >=60):
-										self.overDriftCounter+=1;
-										self.logger.debug('Drift Counter:' + str(self.overDriftCounter));
-										# more than 6 successive times
-										if (self.overDriftCounter >=6):
-											#boiler time is set
-											self.overDriftCounter=0;
-											self.logger.critical('Sync Time: Set boiler time to :' + str(now));
-											self.datetime=now;
-									else:
+								#if drift is more than 60 s
+								if (self.syncTime and abs(drift) >=60):
+									self.overDriftCounter+=1;
+									self.logger.debug('Drift Counter:' + str(self.overDriftCounter));
+									# more than 6 successive times
+									if (self.overDriftCounter >=6):
+										#boiler time is set
 										self.overDriftCounter=0;
-
+										self.logger.critical('Sync Time: Set boiler time to :' + str(now));
+										self.datetime=now;
 								else:
-									#Cancel Master Slave Synchro Flag in case of error
-									self.logger.warning('ModBus Master Slave Synchro Error');
-									self.masterSlaveSynchro=False;
+									self.overDriftCounter=0;
 
-				# validity timeout applies to both modes
+							else:
+								#Cancel Master Slave Synchro Flag in case of error
+								self.logger.warning('ModBus Master Slave Synchro Error');
+								self.masterSlaveSynchro=False;
+
+				# validity timeout
 				if ((time.time()-self.lastSynchroTimestamp) > self.refreshPeriod + VALIDITY_TIME):
 					#log
 					self.logger.warning('Synchro timeout');

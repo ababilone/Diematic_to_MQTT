@@ -89,6 +89,25 @@ class _MinimalModbusInstrument:
 		self._inst(slave_addr).write_registers(reg_address, data)
 		return True
 
+	def listen(self, timeout):
+		"""Return True if any bytes are received within *timeout* seconds.
+
+		Opens and closes the serial port on each call so it never conflicts
+		with minimalmodbus (which also opens/closes per call when
+		CLOSE_PORT_AFTER_EACH_CALL=True).  Used by slaveRx() to detect
+		whether the boiler is actively transmitting on the bus.
+		"""
+		import serial as _serial
+		s = _serial.Serial(
+			port=self._port, baudrate=self._baudrate,
+			bytesize=8, parity='N', stopbits=1, timeout=timeout
+		)
+		try:
+			data = s.read(256)
+			return len(data) > 0
+		finally:
+			s.close()
+
 
 class slaveRequest:
 	FRAME_MIN_LENGTH=0x08;
@@ -209,9 +228,11 @@ class DDModbus:
 
 	def slaveRx(self,modbusSlaveAddress):
 		if self.serial_mode:
-			# Serial mode uses a direct-read loop in Diematic3Panel.loop();
-			# this path is never reached but returns False as a safe default.
-			return False;
+			# Detect bus activity: the boiler transmits to its remote panel (~5s on,
+			# ~5s off).  Return truthy while bytes are flowing so the caller's
+			# dual-master state machine stays in SLAVE mode; return False when the
+			# bus is quiet so it transitions to MASTER and reads registers.
+			return self._mm.listen(DDModbus.SLAVE_RX_TIMEOUT);
 		try:
 			self._transport.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
 			data=self._transport.recv(2048);
