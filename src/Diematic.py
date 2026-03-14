@@ -24,19 +24,28 @@ class DDREGISTER(IntEnum):
 	MINUTE=5;
 	JOUR_SEMAINE=6;
 	TEMP_EXT=7;
+	TEMP_ETE_HIVER=8;    # Summer/winter switchover temperature (150-305, 0.1°C)
+	HORS_GEL_EXT=9;      # External frost protection threshold (-80 to 100, 0.1°C)
 	NB_JOUR_ANTIGEL=13;
 	CONS_JOUR_A=14;
 	CONS_NUIT_A=15;
 	CONS_ANTIGEL_A=16;
 	MODE_A=17;
 	TEMP_AMB_A=18;
+	INFL_S_AMB_A=19;     # Zone A ambient sensor influence (0-10)
+	PENTE_A=20;          # Zone A heating curve slope (0-40, 0.1K/K)
 	TCALC_A=21;
 	CONS_JOUR_B=23;
 	CONS_NUIT_B=24;
 	CONS_ANTIGEL_B=25;
 	MODE_B=26;
 	TEMP_AMB_B=27;
+	INFL_S_AMB_B=28;     # Zone B ambient sensor influence (0-10)
+	PENTE_B=29;          # Zone B heating curve slope (0-40, 0.1K/K)
+	MIN_CIRCUIT_B=30;    # Zone B circuit minimum temperature (100-300, 0.1°C)
+	MAX_CIRCUIT_B=31;    # Zone B circuit maximum temperature (500-950, 0.1°C)
 	TCALC_B=32;
+	MES_DEPART_B=33;     # Zone B supply temperature measurement (0.1°C)
 	CONS_ECS=59;
 	TEMP_ECS=62;
 	TEMP_CHAUD=75;
@@ -176,6 +185,15 @@ class Diematic:
 		self._zoneBDayTargetTemp=None;
 		self._zoneBNightTargetTemp=None;
 		self._zoneBAntiiceTargetTemp=None;
+		self.summerWinterTemp=None;
+		self.frostProtectionTemp=None;
+		self.zoneBSupplyTemp=None;
+		self._slopeA=None;
+		self._slopeB=None;
+		self._inflAmbA=None;
+		self._inflAmbB=None;
+		self._minCircuitB=None;
+		self._maxCircuitB=None;
 		self._nbImpuls=None;
 		self._fctBrul=None;
 		self._fuelConsumption=None;
@@ -363,6 +381,78 @@ class Diematic:
 	def fuelConsumption(self):
 			return self._fuelConsumption;
 
+	# summerWinterTemp and frostProtectionTemp use direct attribute (no underscore)
+	# because they are simple read/write without complex encoding; setter via property below
+	@property
+	def _summerWinterTempProp(self):
+			return self.summerWinterTemp;
+
+	def setSummerWinterTemp(self,x):
+		# range 15.0-30.5°C, step 0.5°C → register in 0.1°C units, step 5
+		val=min(max(round(x/0.5)*5,150),305);
+		reg=DDModbus.RegisterSet(DDREGISTER.TEMP_ETE_HIVER.value,[val]);
+		self.regUpdateRequest.put(reg);
+
+	def setFrostProtectionTemp(self,x):
+		# range -8.0 to +10.0°C, step 0.5°C → register in 0.1°C units with sign encoding
+		val=min(max(round(x/0.5)*5,-80),100);
+		reg=DDModbus.RegisterSet(DDREGISTER.HORS_GEL_EXT.value,[self._encode_float10(val/10)]);
+		self.regUpdateRequest.put(reg);
+
+	@property
+	def slopeA(self):
+			return self._slopeA;
+
+	@slopeA.setter
+	def slopeA(self,x):
+		reg=DDModbus.RegisterSet(DDREGISTER.PENTE_A.value,[self._encode_float10(min(max(x,0),4.0))]);
+		self.regUpdateRequest.put(reg);
+
+	@property
+	def slopeB(self):
+			return self._slopeB;
+
+	@slopeB.setter
+	def slopeB(self,x):
+		reg=DDModbus.RegisterSet(DDREGISTER.PENTE_B.value,[self._encode_float10(min(max(x,0),4.0))]);
+		self.regUpdateRequest.put(reg);
+
+	@property
+	def inflAmbA(self):
+			return self._inflAmbA;
+
+	@inflAmbA.setter
+	def inflAmbA(self,x):
+		reg=DDModbus.RegisterSet(DDREGISTER.INFL_S_AMB_A.value,[min(max(round(x),0),10)]);
+		self.regUpdateRequest.put(reg);
+
+	@property
+	def inflAmbB(self):
+			return self._inflAmbB;
+
+	@inflAmbB.setter
+	def inflAmbB(self,x):
+		reg=DDModbus.RegisterSet(DDREGISTER.INFL_S_AMB_B.value,[min(max(round(x),0),10)]);
+		self.regUpdateRequest.put(reg);
+
+	@property
+	def minCircuitB(self):
+			return self._minCircuitB;
+
+	@minCircuitB.setter
+	def minCircuitB(self,x):
+		reg=DDModbus.RegisterSet(DDREGISTER.MIN_CIRCUIT_B.value,[self._encode_float10(min(max(round(x/5)*50,100),300)/10)]);
+		self.regUpdateRequest.put(reg);
+
+	@property
+	def maxCircuitB(self):
+			return self._maxCircuitB;
+
+	@maxCircuitB.setter
+	def maxCircuitB(self,x):
+		reg=DDModbus.RegisterSet(DDREGISTER.MAX_CIRCUIT_B.value,[self._encode_float10(min(max(round(x/5)*50,500),950)/10)]);
+		self.regUpdateRequest.put(reg);
+
 	@property
 	def scheduleA(self):
 			return self._scheduleA;
@@ -405,13 +495,20 @@ class Diematic:
 		self.regUpdateRequest.put(DDModbus.RegisterSet(base, data));
 		self.refreshRequest=True;
 
-#decoding property to decode Modbus encoded float values	
+#decoding property to decode Modbus encoded float values
 	def float10(self,reg):
 		if (reg==0xFFFF):
 			return None;
 		if (reg >= 0x8000):
 			reg=-(reg & 0x7FFF)
 		return(reg*0.1);
+
+#encode a float value (0.1 precision) to register format (handles negative sign encoding)
+	def _encode_float10(self,value):
+		x=round(value*10);
+		if x < 0:
+			return 0x8000 | (-x);
+		return x & 0xFFFF;
 
 #decoding values stored in hex on 2 registers
 	def hex2reg(self, regDix, regUnit):
@@ -512,6 +609,17 @@ class Diematic:
 		else:
 			self.alarm['txt']='Défaut inconnu';
 		
+		#heating curve and calibration
+		self.summerWinterTemp=self.float10(self.registers[DDREGISTER.TEMP_ETE_HIVER]);
+		self.frostProtectionTemp=self.float10(self.registers[DDREGISTER.HORS_GEL_EXT]);
+		self._slopeA=self.float10(self.registers[DDREGISTER.PENTE_A]);
+		self._slopeB=self.float10(self.registers[DDREGISTER.PENTE_B]);
+		self._inflAmbA=self.registers[DDREGISTER.INFL_S_AMB_A];
+		self._inflAmbB=self.registers[DDREGISTER.INFL_S_AMB_B];
+		self._minCircuitB=self.float10(self.registers[DDREGISTER.MIN_CIRCUIT_B]);
+		self._maxCircuitB=self.float10(self.registers[DDREGISTER.MAX_CIRCUIT_B]);
+		self.zoneBSupplyTemp=self.float10(self.registers[DDREGISTER.MES_DEPART_B]);
+
 		#hotwater
 		self.hotWaterPump=(self.registers[DDREGISTER.BASE_ECS] & 0x20) >>5;
 		self.hotWaterTemp=self.float10(self.registers[DDREGISTER.TEMP_ECS]);

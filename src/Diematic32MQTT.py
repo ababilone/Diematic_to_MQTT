@@ -76,6 +76,15 @@ def diematicPublish(self):
 	buffer.update('burnerStatus',intValue(self.burnerStatus));
 	buffer.update('pumpPower',intValue(self.pumpPower));
 	buffer.update('alarm',json.dumps(self.alarm) if self.alarm is not None else '');
+	buffer.update('summerWinterTemp',floatValue(self.summerWinterTemp));
+	buffer.update('frostProtectionTemp',floatValue(self.frostProtectionTemp));
+	buffer.update('zoneA/slope',floatValue(self.slopeA));
+	buffer.update('zoneA/inflAmb',intValue(self.inflAmbA));
+	buffer.update('zoneB/slope',floatValue(self.slopeB));
+	buffer.update('zoneB/inflAmb',intValue(self.inflAmbB));
+	buffer.update('zoneB/minTemp',floatValue(self.minCircuitB));
+	buffer.update('zoneB/maxTemp',floatValue(self.maxCircuitB));
+	buffer.update('zoneB/supplyTemp',floatValue(self.zoneBSupplyTemp));
 	buffer.update('nbImpuls',intValue(self.nbImpuls));
 	buffer.update('fctBrul',intValue(self.fctBrul));
 	buffer.update('fuelConsumption',floatValue(self.fuelConsumption));
@@ -140,6 +149,8 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addSensor('pump_power',"Puissance Pompe",'power_factor','pumpPower',None,"%");
 		hassio.addSensor('alarm',"Etat",None,'alarm',"{{ value_json.txt}}",None);
 		hassio.addSensor('alarm_id',"N° Erreur",None,'alarm',"{{ value_json.id}}",None);
+		hassio.addNumber('summer_winter_temp',"Temp. Bascule Eté/Hiver",'summerWinterTemp','summerWinterTemp/set',15,30.5,0.5,"°C");
+		hassio.addNumber('frost_protection_temp',"Temp. Hors-Gel Extérieur",'frostProtectionTemp','frostProtectionTemp/set',-8,10,0.5,"°C");
 		hassio.addSensor('nb_impuls',"Impulsions Bruleur",None,'nbImpuls',None,None);
 		hassio.addSensor('fct_brul',"Fonctionnement Bruleur",None,'fctBrul',None,"hours");
 		hassio.addSensor('fuel_consumption',"Consommation Mazout",'volume','fuelConsumption',None,"L");
@@ -161,6 +172,8 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addNumber('zone_A_temp_day',"Température Jour Zone A",'zoneA/dayTemp','zoneA/dayTemp/set',5,30,0.5,"°C");
 		hassio.addNumber('zone_A_temp_night',"Température Nuit Zone A",'zoneA/nightTemp','zoneA/nightTemp/set',5,30,0.5,"°C");
 		hassio.addNumber('zone_A_temp_antiice',"Température Antigel Zone A",'zoneA/antiiceTemp','zoneA/antiiceTemp/set',5,20,0.5,"°C");
+		hassio.addNumber('zone_A_slope',"Pente Courbe Chauffe Zone A",'zoneA/slope','zoneA/slope/set',0,4.0,0.1,"K/K");
+		hassio.addNumber('zone_A_infl_amb',"Influence Sonde Ambiance Zone A",'zoneA/inflAmb','zoneA/inflAmb/set',0,10,1,None);
 		
 		#schedules
 		day_names=[('monday','Lundi'),('tuesday','Mardi'),('wednesday','Mercredi'),
@@ -182,7 +195,12 @@ def haSendDiscoveryMessages(client, userdata, message):
 		hassio.addBinarySensor('zone_B_pump',"Pompe Zone B",None,'zoneB/pump',"1","0");
 		hassio.addNumber('zone_B_temp_day',"Température Jour Zone B",'zoneB/dayTemp','zoneB/dayTemp/set',5,30,0.5,"°C");
 		hassio.addNumber('zone_B_temp_night',"Température Nuit Zone B",'zoneB/nightTemp','zoneB/nightTemp/set',5,30,0.5,"°C");
-		hassio.addNumber('zone_B_temp_antiice',"Température Antigel Zone B",'zoneB/antiiceTemp','zoneB/antiiceTemp/set',5,20,0.5,"°C");		
+		hassio.addNumber('zone_B_temp_antiice',"Température Antigel Zone B",'zoneB/antiiceTemp','zoneB/antiiceTemp/set',5,20,0.5,"°C");
+		hassio.addNumber('zone_B_slope',"Pente Courbe Chauffe Zone B",'zoneB/slope','zoneB/slope/set',0,4.0,0.1,"K/K");
+		hassio.addNumber('zone_B_infl_amb',"Influence Sonde Ambiance Zone B",'zoneB/inflAmb','zoneB/inflAmb/set',0,10,1,None);
+		hassio.addNumber('zone_B_min_temp',"Temp. Min Circuit B",'zoneB/minTemp','zoneB/minTemp/set',10,30,5,"°C");
+		hassio.addNumber('zone_B_max_temp',"Temp. Max Circuit B",'zoneB/maxTemp','zoneB/maxTemp/set',50,95,5,"°C");
+		hassio.addSensor('zone_B_supply_temp',"Temp. Départ Zone B",'temperature','zoneB/supplyTemp',None,"°C");
 		
 	
 def on_connect(client, userdata, flags, reason_code, properties=None):
@@ -192,6 +210,8 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 	client.subscribe(mqttTopicPrefix+'/+/+/set',2);
 	client.subscribe(mqttTopicPrefix+'/+/schedule/+/set',2);
 	client.subscribe(mqttTopicPrefix+'/date/set',2);
+	client.subscribe(mqttTopicPrefix+'/summerWinterTemp/set',2);
+	client.subscribe(mqttTopicPrefix+'/frostProtectionTemp/set',2);
 	if hassioDiscoveryEnable:
 		client.subscribe(hassioDiscoveryPrefix+'/status',2);
 	#clear buffer and inform client that status is still Offline
@@ -222,16 +242,24 @@ def modeSet(client, userdata, message):
 	else:
 		logger.warning('Unknown topic : '+shortTopic);
 
-def tempSet(client, userdata, message):	
+def tempSet(client, userdata, message):
 	#table for topic to attribute bind
 	table={'/hotWater/dayTemp/set':'hotWaterDayTargetTemp',
 		'/hotWater/nightTemp/set':'hotWaterNightTargetTemp',
 		'/zoneA/dayTemp/set':'zoneADayTargetTemp',
 		'/zoneA/nightTemp/set':'zoneANightTargetTemp',
 		'/zoneA/antiiceTemp/set':'zoneAAntiiceTargetTemp',
+		'/zoneA/slope/set':'slopeA',
+		'/zoneA/inflAmb/set':'inflAmbA',
 		'/zoneB/dayTemp/set':'zoneBDayTargetTemp',
 		'/zoneB/nightTemp/set':'zoneBNightTargetTemp',
-		'/zoneB/antiiceTemp/set':'zoneBAntiiceTargetTemp'};
+		'/zoneB/antiiceTemp/set':'zoneBAntiiceTargetTemp',
+		'/zoneB/slope/set':'slopeB',
+		'/zoneB/inflAmb/set':'inflAmbB',
+		'/zoneB/minTemp/set':'minCircuitB',
+		'/zoneB/maxTemp/set':'maxCircuitB',
+		'/summerWinterTemp/set':None,
+		'/frostProtectionTemp/set':None};
 		
 	#remove root of the topic
 	shortTopic=message.topic[len(mqttTopicPrefix):]
@@ -244,8 +272,15 @@ def tempSet(client, userdata, message):
 	
 	#if topic exist
 	if shortTopic in table:
-		#process it
-		setattr(panel,table[shortTopic],value);
+		attr=table[shortTopic];
+		if attr is None:
+			# custom setter methods
+			if shortTopic=='/summerWinterTemp/set':
+				panel.setSummerWinterTemp(value);
+			elif shortTopic=='/frostProtectionTemp/set':
+				panel.setFrostProtectionTemp(value);
+		else:
+			setattr(panel,attr,value);
 		logger.info(shortTopic+' : '+str(value));
 	else:
 		logger.warning('Unknown topic : '+shortTopic);
