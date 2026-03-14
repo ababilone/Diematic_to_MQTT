@@ -1,9 +1,5 @@
 name: "Diematic to MQTT"
-description: >-
-  Modbus bridge for De Dietrich boilers fitted with a Diematic 3 / 4 / Delta
-  regulator. Supports both USB RS485 adapters (serial) and RS485-to-Ethernet
-  adapters (TCP). Publishes boiler data via MQTT with Home Assistant
-  auto-discovery.
+description: "Modbus bridge for De Dietrich Diematic boilers via USB RS485 or TCP"
 version: "2.0.0"
 slug: "diematic_to_mqtt"
 url: "https://github.com/ababilone/Diematic_to_MQTT"
@@ -14,18 +10,14 @@ arch:
   - armv7
   - amd64
   - i386
-
-# Give the add-on access to host serial/USB devices
 uart: true
 
 options:
-  # ----- Connection -----
   connection_type: "serial"
   serial_port: "/dev/ttyUSB0"
   serial_baudrate: 9600
   tcp_ip: ""
   tcp_port: 20108
-  # ----- Boiler -----
   regulator_address: "0x0A"
   regulator_type: "Diematic3"
   timezone: "Europe/Paris"
@@ -33,14 +25,12 @@ options:
   period: 10
   enable_circuit_a: false
   enable_circuit_b: false
-  # ----- MQTT -----
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_login: ""
   mqtt_password: ""
   mqtt_topic_prefix: "home/heater"
   mqtt_client_id: "boiler"
-  # ----- Home Assistant discovery -----
   ha_discovery_enable: true
   ha_discovery_prefix: "homeassistant"
 
