@@ -23,21 +23,26 @@ with open(OPTIONS_FILE) as f:
 
 os.makedirs('/app/conf', exist_ok=True)
 
+# Optional fields default to empty string when not set (None = omitted in HA)
+def g(key, default=''):
+    v = o.get(key)
+    return default if v is None else v
+
 conf = f"""\
 [Modbus]
 connectionType: {o['connection_type']}
-serialPort: {o['serial_port']}
-baudrate: {o['serial_baudrate']}
-ip: {o['tcp_ip']}
-port: {o['tcp_port']}
+serialPort: {g('serial_port')}
+baudrate: {g('serial_baudrate', 9600)}
+ip: {g('tcp_ip')}
+port: {g('tcp_port', 20108)}
 regulatorAddress: {o['regulator_address']}
 interfaceAddress: 0x32
 
 [MQTT]
 brokerHost: {o['mqtt_host']}
 brokerPort: {o['mqtt_port']}
-brokerLogin: {o.get('mqtt_login', '')}
-brokerPassword: {o.get('mqtt_password', '')}
+brokerLogin: {g('mqtt_login')}
+brokerPassword: {g('mqtt_password')}
 topicPrefix: {o['mqtt_topic_prefix']}
 clientId: {o['mqtt_client_id']}
 
@@ -60,7 +65,7 @@ with open('/app/conf/Diematic32MQTT.conf', 'w') as f:
 print(f"Config generated (connection_type={o['connection_type']})", flush=True)
 
 # Warn if serial device not present
-if o['connection_type'] == 'serial' and not os.path.exists(o['serial_port']):
+if o['connection_type'] == 'serial' and not os.path.exists(g('serial_port')):
     print(f"WARNING: serial device {o['serial_port']} not found – check your USB adapter.", flush=True)
 PYEOF
 

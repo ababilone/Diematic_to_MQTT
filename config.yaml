@@ -36,10 +36,12 @@ options:
 
 schema:
   connection_type: "list(serial|tcp)"
-  serial_port: str
-  serial_baudrate: int
-  tcp_ip: str
-  tcp_port: int
+  # Serial mode – leave empty when using TCP
+  serial_port: str?
+  serial_baudrate: int?
+  # TCP mode – leave empty when using serial
+  tcp_ip: str?
+  tcp_port: int?
   regulator_address: str
   regulator_type: "list(Diematic3|Diematic4|DiematicDelta)"
   timezone: str
@@ -49,8 +51,8 @@ schema:
   enable_circuit_b: bool
   mqtt_host: str
   mqtt_port: int
-  mqtt_login: str
-  mqtt_password: password
+  mqtt_login: str?
+  mqtt_password: password?
   mqtt_topic_prefix: str
   mqtt_client_id: str
   ha_discovery_enable: bool
