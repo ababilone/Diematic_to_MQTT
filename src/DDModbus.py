@@ -80,7 +80,7 @@ class _MinimalModbusInstrument:
 		return self._cache[slave_addr]
 
 	def read_registers(self, slave_addr, reg_address, reg_count):
-		"""Returns dict mapping register address → int value."""
+		"""Returns dict mapping register address -> int value."""
 		values = self._inst(slave_addr).read_registers(reg_address, reg_count)
 		return {reg_address + i: values[i] for i in range(reg_count)}
 
@@ -209,69 +209,69 @@ class DDModbus:
 
 	def slaveRx(self,modbusSlaveAddress):
 		if self.serial_mode:
-			# Serial mode uses a direct-read loop (see Diematic3Panel._serialLoop);
+			# Serial mode uses a direct-read loop in Diematic3Panel.loop();
 			# this path is never reached but returns False as a safe default.
 			return False;
-	try:
-				self._transport.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
-				data=self._transport.recv(2048);
-				self.logger.debug('Frame received: '+data.hex());
+		try:
+			self._transport.settimeout(DDModbus.SLAVE_RX_TIMEOUT);
+			data=self._transport.recv(2048);
+			self.logger.debug('Frame received: '+data.hex());
 
-				#frame consistency check
-				frame=slaveRequest(data);
+			#frame consistency check
+			frame=slaveRequest(data);
 
-				#if slave address is the expected one
-				if ((modbusSlaveAddress!=0) and (frame.modbusAddress==modbusSlaveAddress)):
-					#ack for WRITE_MULTIPLE_REGISTERS request
-					if (frame.modbusFunctionCode==DDModbus.WRITE_MULTIPLE_REGISTERS):
-						#record this frame to use it later when the boiler requests data
-						self.lastValidSlaveFrameReceived = data[:];
-						#send ACK
-						self.logger.debug('Ack WRITE_MULTIPLE_REGISTERS frame');
+			#if slave address is the expected one
+			if ((modbusSlaveAddress!=0) and (frame.modbusAddress==modbusSlaveAddress)):
+				#ack for WRITE_MULTIPLE_REGISTERS request
+				if (frame.modbusFunctionCode==DDModbus.WRITE_MULTIPLE_REGISTERS):
+					#record this frame to use it later when the boiler requests data
+					self.lastValidSlaveFrameReceived = data[:];
+					#send ACK
+					self.logger.debug('Ack WRITE_MULTIPLE_REGISTERS frame');
+					tx=bytearray();
+					tx.extend(data[0:6]);
+					crc=calc_crc(tx);
+					tx.append(crc & 0xFF);
+					tx.append((crc >> 8) & 0xFF);
+					tx.append(0);
+					self._transport.send(tx);
+					self.logger.debug('Response sent:' + tx.hex());
+				#ack for READ_ANALOG_HOLDING_REGISTERS
+				elif (frame.modbusFunctionCode==DDModbus.READ_ANALOG_HOLDING_REGISTERS):
+					# let's build a response - using the last received slave frame (without changing any value)
+					self.logger.debug('We have this frame in memory to use as source for the data requested:' + self.lastValidSlaveFrameReceived.hex());
+					origframe=slaveRequest(self.lastValidSlaveFrameReceived);
+					# verify the frame we have in memory is containing what the request wants
+					verif_modbus_address = (frame.modbusAddress == origframe.modbusAddress);
+					verif_reg_address = (frame.regAddress == origframe.regAddress);
+					verif_nbreg = (frame.regNb == origframe.regNb);
+					self.logger.debug('prev frame address' + hex(origframe.modbusAddress) + ' matching? '+ str(verif_modbus_address));
+					self.logger.debug('prev frame start address ' + hex(origframe.regAddress) + ' matching? '+ str(verif_reg_address));
+					self.logger.debug('prev frame regnb ' + str(origframe.regNb) + ' matching? '+ str(verif_nbreg));
+					if (verif_modbus_address and verif_nbreg and verif_reg_address):
+						# build the message to send
 						tx=bytearray();
-						tx.extend(data[0:6]);
+						tx.extend(data[0:2]); #address + function
+						tx.append(origframe.byteCount); #byte count
+						tx.extend(self.lastValidSlaveFrameReceived[7:7+origframe.byteCount]); # data registers payload
 						crc=calc_crc(tx);
 						tx.append(crc & 0xFF);
 						tx.append((crc >> 8) & 0xFF);
 						tx.append(0);
-						self._transport.send(tx);
-						self.logger.debug('Response sent:' + tx.hex());
-					#ack for READ_ANALOG_HOLDING_REGISTERS
-					elif (frame.modbusFunctionCode==DDModbus.READ_ANALOG_HOLDING_REGISTERS):
-						# let's build a response - using the last received slave frame (without changing any value)
-						self.logger.debug('We have this frame in memory to use as source for the data requested:' + self.lastValidSlaveFrameReceived.hex());
-						origframe=slaveRequest(self.lastValidSlaveFrameReceived);
-						# verify the frame we have in memory is containing what the request wants
-						verif_modbus_address = (frame.modbusAddress == origframe.modbusAddress);
-						verif_reg_address = (frame.regAddress == origframe.regAddress);
-						verif_nbreg = (frame.regNb == origframe.regNb);
-						self.logger.debug('prev frame address' + hex(origframe.modbusAddress) + ' matching? '+ str(verif_modbus_address));
-						self.logger.debug('prev frame start address ' + hex(origframe.regAddress) + ' matching? '+ str(verif_reg_address));
-						self.logger.debug('prev frame regnb ' + str(origframe.regNb) + ' matching? '+ str(verif_nbreg));
-						if (verif_modbus_address and verif_nbreg and verif_reg_address):
-							# build the message to send
-							tx=bytearray();
-							tx.extend(data[0:2]); #address + function
-							tx.append(origframe.byteCount); #byte count
-							tx.extend(self.lastValidSlaveFrameReceived[7:7+origframe.byteCount]); # data registers payload
-							crc=calc_crc(tx);
-							tx.append(crc & 0xFF);
-							tx.append((crc >> 8) & 0xFF);
-							tx.append(0);
-							self.logger.debug('we need to send: ' + tx.hex());
-							if self.RESPOND_TO_READ_REQUESTS:
-								self.logger.debug('sending');
-								self._transport.send(tx);
-							else:
-								self.logger.debug('not sending to boiler (virtual mode for debug)');
+						self.logger.debug('we need to send: ' + tx.hex());
+						if self.RESPOND_TO_READ_REQUESTS:
+							self.logger.debug('sending');
+							self._transport.send(tx);
 						else:
-							self.logger.debug('not sending anything as frame in memory is not matching the request received')
-				else:
-					self.logger.debug('slave address is not matching expected list');
+							self.logger.debug('not sending to boiler (virtual mode for debug)');
+					else:
+						self.logger.debug('not sending anything as frame in memory is not matching the request received')
+			else:
+				self.logger.debug('slave address is not matching expected list');
 
-				return frame;
-			except OSError:
-				return False;
+			return frame;
+		except OSError:
+			return False;
 
 	def masterReadAnalog(self,modbusAddress,regAddress,regNb):
 		if self.serial_mode:
