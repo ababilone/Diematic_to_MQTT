@@ -626,14 +626,6 @@ class Diematic:
 		#hotwater
 		self.hotWaterPump=(self.registers[DDREGISTER.BASE_ECS] & 0x20) >>5;
 		self.hotWaterTemp=self.float10(self.registers[DDREGISTER.TEMP_ECS]);
-		if ((self.registers[DDREGISTER.MODE_A] & 0x50) ==0):
-			self._hotWaterMode='AUTO';
-		elif ((self.registers[DDREGISTER.MODE_A] & 0x50) ==0x50):
-			self._hotWaterMode='TEMP';
-		elif ((self.registers[DDREGISTER.MODE_A] & 0x50) ==0x10):
-			self._hotWaterMode='PERM';
-		else:
-			self._hotWaterMode=None;
 		self._hotWaterDayTargetTemp=self.float10(self.registers[DDREGISTER.CONS_ECS]);
 		self._hotWaterNightTargetTemp=self.float10(self.registers[DDREGISTER.CONS_ECS_NUIT]);
 		
@@ -696,6 +688,17 @@ class Diematic:
 			self._zoneBDayTargetTemp=None;
 			self._zoneBNightTargetTemp=None;
 			self._zoneBAntiiceTargetTemp=None;
+
+		# hotWater mode: stored in MODE_B when zone B active, else in MODE_A
+		hotWaterModeReg = self.registers[DDREGISTER.MODE_B] if self._zoneBMode is not None else self.registers[DDREGISTER.MODE_A];
+		if ((hotWaterModeReg & 0x50) ==0):
+			self._hotWaterMode='AUTO';
+		elif ((hotWaterModeReg & 0x50) ==0x50):
+			self._hotWaterMode='TEMP';
+		elif ((hotWaterModeReg & 0x50) ==0x10):
+			self._hotWaterMode='PERM';
+		else:
+			self._hotWaterMode=None;
 
 		# nbImpuls coded in hex on 2 registers
 		self._nbImpuls = self.hex2reg(DDREGISTER.NB_IMPULS_DIX, DDREGISTER.NB_IMPULS_UNIT);
