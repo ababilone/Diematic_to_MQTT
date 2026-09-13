@@ -128,8 +128,15 @@ def diematicPublish(self):
 	#send MQTT messages
 	buffer.send();
 
-def haSendDiscoveryMessages(client, userdata, message):
-	if (message.payload.decode()=='online'):
+#Called two ways: as the paho callback for Home Assistant's birth message
+#on <discovery_prefix>/status (message is set), and directly when we connect
+#to the broker (message is None). That second path matters: HA's birth
+#message is NOT retained, so an add-on starting while HA is already running
+#never receives it, and would never publish its discovery configs. If the
+#broker has meanwhile lost its retained messages, the entities stay orphaned
+#(unavailable, "restored") until the next full HA restart.
+def haSendDiscoveryMessages(client=None, userdata=None, message=None):
+	if (message is None or message.payload.decode()=='online'):
 		logger.info('Sending HA discovery messages');
 		
 		#boiler
@@ -216,6 +223,9 @@ def on_connect(client, userdata, flags, reason_code, properties=None):
 	client.subscribe(mqttTopicPrefix+'/frostProtectionTemp/set',2);
 	if hassioDiscoveryEnable:
 		client.subscribe(hassioDiscoveryPrefix+'/status',2);
+		#publish discovery right away rather than waiting on HA's birth
+		#message, which never arrives when HA is already running
+		haSendDiscoveryMessages();
 	#clear buffer and inform client that status is still Offline
 	buffer.clear();
 	buffer.update('status','Offline');

@@ -1,6 +1,6 @@
 name: "Diematic to MQTT"
 description: "Modbus bridge for De Dietrich Diematic boilers via USB RS485 or TCP"
-version: "2.0.0"
+version: "2.0.1"
 slug: "diematic_to_mqtt"
 url: "https://github.com/ababilone/Diematic_to_MQTT"
 init: false
